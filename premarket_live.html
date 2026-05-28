@@ -1569,6 +1569,35 @@ function showTyping(){
   );
 }
 
+function buildGeneralCard(d){
+  // Render a general market Q&A answer (no ticker/verdict structure)
+  const modeLabel = d.mode === 'ai'
+    ? '✦ Claude AI + Live Web Search'
+    : '⚙ Rule-Based';
+
+  // Light markdown → HTML: **bold**, double-newline → paragraph, single → <br>
+  let html = (d.answer || 'No response.')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#d4ceff">$1</strong>')
+    .replace(/\n\n+/g, '</p><p class="gp">')
+    .replace(/\n/g, '<br>');
+
+  return `<div class="resp-card">
+    <div style="padding:12px 14px 8px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.05)">
+      <div style="width:7px;height:7px;background:#7c6aff;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px #7c6aff88"></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#7c6aff;letter-spacing:.1em;text-transform:uppercase">Market Intelligence</div>
+    </div>
+    <div style="padding:12px 14px 14px;font-size:12.5px;line-height:1.85;color:#b8b2d8">
+      <p class="gp">${html}</p>
+    </div>
+    <div class="resp-footer">
+      <span style="font-size:10px">ℹ</span>
+      <span class="resp-footer-txt">${modeLabel} · Informational only, not financial advice.</span>
+    </div>
+  </div>
+  <style>.gp{margin-top:.75rem}</style>`;
+}
+
 function buildResponseCard(d){
   const vIcon = {BUY:'▲', WAIT:'◆', AVOID:'▼'}[d.verdict] || '◆';
   const confColor = d.confidence >= 75 ? '#00d47e' : d.confidence >= 55 ? '#f7c948' : '#ff3f5e';
@@ -1689,6 +1718,12 @@ async function sendChat(){
 
     if(data.error){
       appendMsg(`⚠ ${data.error}`, 'msg-error');
+    } else if(data.type === 'general'){
+      // General market Q&A — no ticker/verdict card
+      appendMsg(buildGeneralCard(data), 'msg-system');
+      const modeTag = document.getElementById('cpModeTag');
+      modeTag.className = 'cp-mode ai';
+      modeTag.textContent = '✦ AI + Web Search';
     } else {
       appendMsg(buildResponseCard(data), 'msg-system');
       // Remember this ticker for any follow-up questions

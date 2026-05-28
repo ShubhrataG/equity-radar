@@ -536,6 +536,61 @@ def _rule_based_ask(ticker, question, price, prev, pct, news_titles):
         "mode": "rule-based",
     }
 
+def _get_quick_market_ctx():
+    """Fast snapshot of major indices for general Q&A context."""
+    try:
+        vix,  _    = idx("^VIX")
+        sp,   sp_c = idx("^GSPC")
+        nq,   nq_c = idx("^IXIC")
+        dj,   dj_c = idx("^DJI")
+        et = datetime.now(pytz.timezone("US/Eastern"))
+        return (
+            f"Live market ({et.strftime('%H:%M ET, %b %d %Y')}):\n"
+            f"S&P 500: {sp:,.0f} ({sp_c:+.2f}%)  |  NASDAQ: {nq:,.0f} ({nq_c:+.2f}%)  "
+            f"|  Dow: {dj:,.0f} ({dj_c:+.2f}%)  |  VIX: {vix:.1f}"
+        )
+    except Exception:
+        return ""
+
+def _general_ask(question):
+    """Answer any financial / market question via Claude + web search (no ticker required)."""
+    ctx = _get_quick_market_ctx()
+
+    system = """You are a senior market analyst inside the Equity Radar terminal.
+Answer financial and market questions clearly, concisely, and directly.
+
+You can cover anything financial:
+- Current market conditions, indices, sectors, macro trends
+- Trading & investing concepts (VIX, P/E, options, ETFs, short interest, etc.)
+- News events and how they affect markets
+- General strategy, risk management, portfolio thinking
+- Crypto, commodities, bonds, forex
+- Comparisons between stocks, sectors, or ETFs
+
+Guidelines:
+- 2-4 short paragraphs max — be dense and useful, not wordy
+- Use specific numbers and current data when you find them via web search
+- Be direct and opinionated where the data supports it
+- Do NOT give personalised advice ("you should buy X") — speak in general analytical terms
+- Plain readable text only — no markdown symbols like **, ##, or ---
+- If the question is about a specific stock but phrased generally, analyse that stock"""
+
+    user_msg = question
+    if ctx:
+        user_msg += f"\n\nCurrent market snapshot:\n{ctx}"
+
+    resp = _ANT_CLIENT.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=900,
+        system=system,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    text = "".join(
+        block.text for block in resp.content if hasattr(block, "text")
+    ).strip()
+    return {"type": "general", "answer": text, "mode": "ai"}
+
 def _claude_ask(ticker, question, market_ctx, news_titles):
     """Full AI analysis via Claude claude-sonnet-4-6 with web search."""
     system = """You are a quantitative market analyst embedded in a professional stock intelligence terminal called Equity Radar.
@@ -611,11 +666,20 @@ def api_ask():
     # 1. Extract ticker
     ticker = _extract_ticker(question)
     if not ticker:
+        # No ticker found — route to general market Q&A if Claude is available
+        if _ANT_CLIENT:
+            try:
+                return jsonify(_general_ask(question))
+            except Exception as e:
+                return jsonify({"error": f"AI analysis failed: {str(e)[:120]}"}), 500
+        # No Claude: fall back to helpful error
         return jsonify({
             "error": (
                 "I couldn't identify a stock ticker in your question. "
                 "Please name the stock — e.g. \"Should I take profit on LUNR at $3.16?\" "
-                "or \"Is NVDA a good entry right now?\""
+                "or \"Is NVDA a good entry right now?\"\n"
+                "With AI mode enabled (ANTHROPIC_API_KEY) I can also answer general "
+                "questions like \"What sectors are strong today?\" or \"Explain VIX.\""
             )
         }), 400
 
