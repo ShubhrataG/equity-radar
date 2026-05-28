@@ -1513,7 +1513,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
   </div>
 
   <div class="cp-input-row">
-    <input id="chatInput" placeholder="e.g. Should I buy NVDA at $132 right now?" maxlength="300"
+    <input id="chatInput" placeholder="e.g. NVDA buy or sell? · LUNR target? · or follow up: will it go to 5?" maxlength="300"
       onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}" />
     <button id="chatSend" onclick="sendChat()" title="Send">➤</button>
   </div>
@@ -1522,8 +1522,10 @@ window.addEventListener('DOMContentLoaded', ()=>{
 <script>
 // ── CHAT STATE ──
 const CHAT_API = 'http://localhost:5173/api/ask';
-let chatOpen = false;
-let chatBusy = false;
+let chatOpen      = false;
+let chatBusy      = false;
+let lastChatTicker = null;   // remember ticker across follow-up questions
+let lastChatName   = null;
 
 function toggleChat(){
   chatOpen = !chatOpen;
@@ -1658,15 +1660,30 @@ async function sendChat(){
   document.getElementById('chatSend').disabled = true;
   document.getElementById('cpSugs').style.display = 'none';
 
-  // Append user bubble
-  appendMsg(q, 'msg-user');
+  // ── Context injection: follow-up questions ────────────────────────────────
+  // If the user writes "it", "this", "that" etc. with no explicit ticker,
+  // prepend the last analyzed ticker so the server can resolve it.
+  let apiQ        = q;
+  let contextNote = '';
+  if(lastChatTicker){
+    const hasExplicitTicker = /\$[A-Za-z]{1,5}|\b[A-Z]{2,5}\b/.test(q);
+    const isFollowUp = !hasExplicitTicker &&
+      /\bit\b|\bthis\b|\bthat\b|\bsame\b|\bstill\b|\bsell\b.*\bnow\b|\bhow high\b|\bhow much\b/i.test(q);
+    if(isFollowUp){
+      apiQ        = lastChatTicker + ' — ' + q;
+      contextNote = `<span style="font-size:10px;opacity:.45;margin-left:6px">(re: ${lastChatTicker}${lastChatName?' · '+lastChatName:''})</span>`;
+    }
+  }
+
+  // Show user bubble (with subtle context label when injected)
+  appendMsg(q + contextNote, 'msg-user');
   input.value = '';
 
-  // Show typing
+  // Show typing indicator
   const typingEl = showTyping();
 
   try {
-    const res  = await fetch(`${CHAT_API}?q=${encodeURIComponent(q)}`, {signal: AbortSignal.timeout(60000)});
+    const res  = await fetch(`${CHAT_API}?q=${encodeURIComponent(apiQ)}`, {signal: AbortSignal.timeout(60000)});
     const data = await res.json();
     typingEl.remove();
 
@@ -1674,6 +1691,8 @@ async function sendChat(){
       appendMsg(`⚠ ${data.error}`, 'msg-error');
     } else {
       appendMsg(buildResponseCard(data), 'msg-system');
+      // Remember this ticker for any follow-up questions
+      if(data.ticker){ lastChatTicker = data.ticker; lastChatName = data.name || null; }
       // Update mode tag
       const modeTag = document.getElementById('cpModeTag');
       if(data.mode === 'ai'){
