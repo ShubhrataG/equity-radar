@@ -417,7 +417,7 @@ def index():
 # ── START ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("\n  ╔══════════════════════════════════════╗")
-    print("  ║  PreMarket Terminal — Full Universe  ║")
+    print("  ║  Equity Radar — Full Universe  ║")
     print("  ║  http://localhost:5173               ║")
     print("  ╚══════════════════════════════════════╝\n")
     threading.Thread(target=lambda:(time.sleep(1.8),webbrowser.open("http://localhost:5173")),daemon=True).start()

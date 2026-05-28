@@ -1,8 +1,8 @@
-# ⚡ PreMarket Terminal
+# ⚡ Equity Radar
 
 > Bloomberg-style pre-market stock intelligence terminal — 120+ tickers, live yFinance data, AI-powered bias analysis, sector heat map, portfolio P&L tracker, and auto-refresh. All in a single-page dark terminal UI.
 
-![PreMarket Terminal](https://img.shields.io/badge/stack-Python%20%7C%20Flask%20%7C%20Vanilla%20JS-blue)
+![Equity Radar](https://img.shields.io/badge/stack-Python%20%7C%20Flask%20%7C%20Vanilla%20JS-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Data](https://img.shields.io/badge/data-Yahoo%20Finance%20%7E15min%20delay-yellow)
 
@@ -10,7 +10,7 @@
 
 ## What It Does
 
-PreMarket Terminal is a self-hosted financial intelligence dashboard that gives you a professional-grade pre-market overview every morning before the bell. It fetches live (≈15 min delayed) price data from Yahoo Finance, applies rule-based bias scoring, and renders everything in a Bloomberg-inspired dark terminal UI.
+Equity Radar is a self-hosted financial intelligence dashboard that gives you a professional-grade pre-market overview every morning before the bell. It fetches live (≈15 min delayed) price data from Yahoo Finance, applies rule-based bias scoring, and renders everything in a Bloomberg-inspired dark terminal UI.
 
 **At a glance you get:**
 - Current price, % change, and session label (PRE / LIVE / POST / CLOSED) for 120+ tickers
@@ -155,7 +155,7 @@ Add tickers to the input field (comma-separated) and hit Refresh, or use the pre
 ### File structure
 
 ```
-premarket-terminal/
+equity-radar/
 ├── premarket_server.py   # Flask backend — data fetching, bias scoring, API
 └── premarket_live.html   # Single-page frontend — all UI, charts, portfolio
 ```
