@@ -1277,5 +1277,419 @@ window.addEventListener('DOMContentLoaded', ()=>{
   doRefresh().catch(()=>renderFallback());
 });
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════
+     ASK THE MARKET — fixed chat panel
+═══════════════════════════════════════════════════════════ -->
+<style>
+/* ── Chat launcher button ── */
+#chatLauncher{
+  position:fixed;bottom:24px;right:24px;z-index:2000;
+  display:flex;align-items:center;gap:8px;
+  padding:11px 20px;border-radius:99px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#7c6aff,#3b82f6);
+  color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;
+  box-shadow:0 4px 24px rgba(124,106,255,.45);
+  transition:all .2s;user-select:none;
+}
+#chatLauncher:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(124,106,255,.55)}
+#chatLauncher .cl-dot{width:7px;height:7px;border-radius:50%;background:#6affc5;
+  box-shadow:0 0 6px #6affc5;animation:pulse 1.6s infinite}
+
+/* ── Chat panel ── */
+#chatPanel{
+  position:fixed;bottom:82px;right:24px;z-index:1999;
+  width:400px;max-height:640px;
+  background:rgba(9,14,26,.96);
+  border:1px solid rgba(124,106,255,.3);
+  border-radius:16px;
+  display:none;flex-direction:column;
+  box-shadow:0 20px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(124,106,255,.1);
+  backdrop-filter:blur(20px);
+  overflow:hidden;
+  animation:slideUp .25s ease;
+}
+@keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+#chatPanel.open{display:flex}
+
+/* Panel header */
+.cp-hdr{
+  display:flex;align-items:center;gap:10px;
+  padding:14px 18px;
+  border-bottom:1px solid rgba(124,106,255,.15);
+  background:rgba(124,106,255,.06);
+  flex-shrink:0;
+}
+.cp-icon{font-size:18px}
+.cp-title{font-size:13px;font-weight:800;color:#f2f0ff;flex:1;letter-spacing:-.2px}
+.cp-sub{font-size:9.5px;color:#8b879e;letter-spacing:.4px}
+.cp-mode{font-size:9px;padding:2px 8px;border-radius:99px;font-weight:700;letter-spacing:.5px}
+.cp-mode.ai{background:rgba(106,255,197,.1);color:#6affc5;border:1px solid rgba(106,255,197,.25)}
+.cp-mode.rule{background:rgba(247,201,72,.1);color:#f7c948;border:1px solid rgba(247,201,72,.25)}
+.cp-close{background:none;border:none;color:#8b879e;cursor:pointer;font-size:16px;padding:2px 6px;border-radius:5px;transition:color .15s}
+.cp-close:hover{color:#f2f0ff}
+
+/* Messages area */
+.cp-msgs{
+  flex:1;overflow-y:auto;padding:16px;
+  display:flex;flex-direction:column;gap:12px;
+  scrollbar-width:thin;scrollbar-color:rgba(124,106,255,.2) transparent;
+}
+.cp-msgs::-webkit-scrollbar{width:3px}
+.cp-msgs::-webkit-scrollbar-thumb{background:rgba(124,106,255,.25);border-radius:2px}
+
+/* Bubble styles */
+.msg-user{
+  align-self:flex-end;max-width:80%;
+  background:linear-gradient(135deg,rgba(124,106,255,.25),rgba(59,130,246,.2));
+  border:1px solid rgba(124,106,255,.3);
+  border-radius:14px 14px 4px 14px;
+  padding:10px 14px;font-size:12.5px;color:#dde4f0;line-height:1.5;
+}
+.msg-system{
+  align-self:flex-start;max-width:94%;width:94%;
+}
+
+/* Typing indicator */
+.msg-typing{
+  align-self:flex-start;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:12px 16px;
+  display:flex;align-items:center;gap:5px;
+}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:#7c6aff;
+  animation:typingBounce .8s infinite}
+.typing-dot:nth-child(2){animation-delay:.15s}
+.typing-dot:nth-child(3){animation-delay:.3s}
+@keyframes typingBounce{0%,80%,100%{transform:scale(0.6);opacity:.4}40%{transform:scale(1);opacity:1}}
+
+/* Response card */
+.resp-card{
+  background:rgba(255,255,255,.025);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;overflow:hidden;
+  font-size:12px;
+}
+.resp-card-top{
+  padding:12px 14px 10px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+}
+.resp-ticker{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:800;color:#f2f0ff}
+.resp-name{font-size:10.5px;color:#8b879e;flex:1}
+.resp-price{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#dde4f0}
+
+/* Verdict badge */
+.verdict{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:12px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;
+  padding:5px 14px;border-radius:8px;
+}
+.verdict.BUY   {background:rgba(0,212,126,.15);color:#00d47e;border:1px solid rgba(0,212,126,.3)}
+.verdict.WAIT  {background:rgba(247,201,72,.12);color:#f7c948;border:1px solid rgba(247,201,72,.3)}
+.verdict.AVOID {background:rgba(255,63,94,.12); color:#ff3f5e;border:1px solid rgba(255,63,94,.3)}
+
+/* Confidence bar */
+.conf-row{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.conf-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:#8b879e;font-weight:700;white-space:nowrap}
+.conf-track{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+.conf-fill{height:100%;border-radius:3px;transition:width 1s ease}
+.conf-num{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;white-space:nowrap}
+
+/* Price levels grid */
+.levels-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1px solid rgba(255,255,255,.06)}
+.lvl{padding:10px 12px;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:3px}
+.lvl:last-child{border-right:none}
+.lvl-lbl{font-size:8px;text-transform:uppercase;letter-spacing:.7px;color:#8b879e;font-weight:700}
+.lvl-val{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700}
+.lvl.entry .lvl-val{color:#3b82f6}
+.lvl.stop  .lvl-val{color:#ff3f5e}
+.lvl.tp    .lvl-val{color:#00d47e}
+.targets-row{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid rgba(255,255,255,.06)}
+.tgt{padding:8px 12px;border-right:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:7px}
+.tgt:last-child{border-right:none}
+.tgt-lbl{font-size:8.5px;color:#8b879e;text-transform:uppercase;letter-spacing:.5px}
+.tgt-val{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#22d3ee}
+
+/* Risk badge */
+.risk-row{padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:8px}
+.risk-badge{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;padding:3px 10px;border-radius:99px}
+.risk-badge.LOW   {background:rgba(0,212,126,.1);color:#00d47e;border:1px solid rgba(0,212,126,.25)}
+.risk-badge.MEDIUM{background:rgba(247,201,72,.1);color:#f7c948;border:1px solid rgba(247,201,72,.25)}
+.risk-badge.HIGH  {background:rgba(255,63,94,.1); color:#ff3f5e;border:1px solid rgba(255,63,94,.25)}
+.risk-desc{font-size:10px;color:#8b879e}
+
+/* Explanation */
+.resp-expl{padding:11px 14px;font-size:11.5px;color:#b0b8cc;line-height:1.65;border-bottom:1px solid rgba(255,255,255,.06)}
+
+/* Catalysts */
+.catalysts{padding:9px 14px;display:flex;flex-direction:column;gap:4px}
+.cat-item{font-size:10.5px;color:#8b879e;display:flex;gap:6px;align-items:flex-start;line-height:1.4}
+.cat-item::before{content:'→';color:#7c6aff;flex-shrink:0;font-size:10px}
+
+/* Mode footer */
+.resp-footer{padding:7px 14px;background:rgba(255,255,255,.02);display:flex;align-items:center;gap:6px}
+.resp-footer-txt{font-size:9px;color:#3e4d63}
+
+/* Suggestions */
+.cp-suggestions{padding:8px 16px;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;border-top:1px solid rgba(255,255,255,.05)}
+.sug-btn{font-size:10px;padding:4px 11px;border-radius:99px;border:1px solid rgba(124,106,255,.22);
+  background:rgba(124,106,255,.07);color:#8b879e;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:'Inter',sans-serif}
+.sug-btn:hover{border-color:rgba(124,106,255,.45);color:#c5b8ff;background:rgba(124,106,255,.14)}
+
+/* Input row */
+.cp-input-row{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 14px;
+  border-top:1px solid rgba(124,106,255,.15);
+  background:rgba(6,6,10,.6);
+  flex-shrink:0;
+}
+#chatInput{
+  flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+  color:#dde4f0;font-family:'Inter',sans-serif;font-size:12.5px;
+  padding:9px 13px;border-radius:10px;outline:none;
+  transition:border .15s,box-shadow .15s;
+  resize:none;
+}
+#chatInput:focus{border-color:rgba(124,106,255,.5);box-shadow:0 0 0 3px rgba(124,106,255,.12)}
+#chatInput::placeholder{color:#3e4d63}
+#chatSend{
+  flex-shrink:0;width:36px;height:36px;border-radius:10px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#7c6aff,#3b82f6);
+  color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;
+  transition:all .15s;
+}
+#chatSend:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(124,106,255,.4)}
+#chatSend:disabled{opacity:.4;pointer-events:none}
+
+/* Error bubble */
+.msg-error{
+  align-self:flex-start;max-width:90%;
+  background:rgba(255,63,94,.06);border:1px solid rgba(255,63,94,.2);
+  border-radius:10px;padding:10px 14px;font-size:11.5px;color:#ff3f5e;line-height:1.5;
+}
+
+@media(max-width:450px){
+  #chatPanel{width:calc(100vw - 16px);right:8px;bottom:76px}
+  #chatLauncher{right:12px;bottom:16px}
+}
+</style>
+
+<!-- Launcher button -->
+<button id="chatLauncher" onclick="toggleChat()">
+  <div class="cl-dot"></div>
+  Ask the Market
+  <span style="font-size:10px;opacity:.7">↑</span>
+</button>
+
+<!-- Chat panel -->
+<div id="chatPanel">
+  <div class="cp-hdr">
+    <span class="cp-icon">🤖</span>
+    <div style="flex:1">
+      <div class="cp-title">Ask the Market</div>
+      <div class="cp-sub">Equity Radar Intelligence</div>
+    </div>
+    <span class="cp-mode rule" id="cpModeTag">Rule-Based</span>
+    <button class="cp-close" onclick="toggleChat()">✕</button>
+  </div>
+
+  <div class="cp-msgs" id="cpMsgs">
+    <div style="align-self:center;text-align:center;padding:20px 10px">
+      <div style="font-size:28px;margin-bottom:8px">📡</div>
+      <div style="font-size:12px;color:#8b879e;line-height:1.65">
+        Ask me anything about a stock.<br>
+        <span style="color:#7c6aff">I'll find the data and tell you what to do.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="cp-suggestions" id="cpSugs">
+    <button class="sug-btn" onclick="askSuggestion(this)">Should I buy NVDA now?</button>
+    <button class="sug-btn" onclick="askSuggestion(this)">TSLA entry point?</button>
+    <button class="sug-btn" onclick="askSuggestion(this)">Target price for AMD?</button>
+    <button class="sug-btn" onclick="askSuggestion(this)">Is RKLB a buy this week?</button>
+  </div>
+
+  <div class="cp-input-row">
+    <input id="chatInput" placeholder="e.g. Should I buy NVDA at $132 right now?" maxlength="300"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}" />
+    <button id="chatSend" onclick="sendChat()" title="Send">➤</button>
+  </div>
+</div>
+
+<script>
+// ── CHAT STATE ──
+const CHAT_API = 'http://localhost:5173/api/ask';
+let chatOpen = false;
+let chatBusy = false;
+
+function toggleChat(){
+  chatOpen = !chatOpen;
+  const panel = document.getElementById('chatPanel');
+  const btn   = document.getElementById('chatLauncher');
+  if(chatOpen){
+    panel.classList.add('open');
+    btn.innerHTML = '<div class="cl-dot"></div> Ask the Market <span style="font-size:10px;opacity:.7">↓</span>';
+    document.getElementById('chatInput').focus();
+    // Check if AI mode is active
+    fetch(CHAT_API + '?q=ping').then(r=>r.json()).then(d=>{
+      if(d.mode==='ai') document.getElementById('cpModeTag').className='cp-mode ai', document.getElementById('cpModeTag').textContent='✦ AI + Web Search';
+    }).catch(()=>{});
+  } else {
+    panel.classList.remove('open');
+    btn.innerHTML = '<div class="cl-dot"></div> Ask the Market <span style="font-size:10px;opacity:.7">↑</span>';
+  }
+}
+
+function askSuggestion(btn){
+  document.getElementById('chatInput').value = btn.textContent;
+  // Hide suggestions after first use
+  document.getElementById('cpSugs').style.display = 'none';
+  sendChat();
+}
+
+function appendMsg(html, cls){
+  const msgs = document.getElementById('cpMsgs');
+  const div  = document.createElement('div');
+  div.className = cls;
+  div.innerHTML  = html;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function showTyping(){
+  return appendMsg(
+    '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>',
+    'msg-typing'
+  );
+}
+
+function buildResponseCard(d){
+  const vIcon = {BUY:'▲', WAIT:'◆', AVOID:'▼'}[d.verdict] || '◆';
+  const confColor = d.confidence >= 75 ? '#00d47e' : d.confidence >= 55 ? '#f7c948' : '#ff3f5e';
+  const chgVal = d.current_price && d.entry
+    ? ((d.take_profit - d.entry)/d.entry*100).toFixed(1) : '—';
+
+  const catalysts = (d.catalysts||[]).filter(Boolean).slice(0,3);
+  const catHtml = catalysts.length
+    ? `<div class="catalysts">${catalysts.map(c=>`<div class="cat-item">${c.length>90?c.slice(0,90)+'…':c}</div>`).join('')}</div>`
+    : '';
+
+  const modeLabel = d.mode === 'ai'
+    ? '✦ Claude AI + Live Web Search'
+    : '⚙ Rule-Based · Set ANTHROPIC_API_KEY for AI mode';
+
+  return `<div class="resp-card">
+    <div class="resp-card-top">
+      <div>
+        <div class="resp-ticker">${d.ticker||'—'}</div>
+        <div class="resp-name">${d.name||''} ${d.sector?'· '+d.sector:''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="resp-price">$${(d.current_price||0).toFixed(2)}</div>
+        <div style="font-size:9px;color:#8b879e;margin-top:2px">current price</div>
+      </div>
+    </div>
+
+    <div style="padding:12px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.06)">
+      <div class="verdict ${d.verdict}">${vIcon} ${d.verdict}</div>
+      <div style="flex:1"></div>
+      <div style="text-align:right">
+        <div style="font-size:9px;color:#8b879e;text-transform:uppercase;letter-spacing:.6px">Confidence</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:800;color:${confColor}">${d.confidence}%</div>
+      </div>
+    </div>
+
+    <div class="conf-row">
+      <span class="conf-lbl">Conviction</span>
+      <div class="conf-track"><div class="conf-fill" style="width:${d.confidence}%;background:${confColor}"></div></div>
+      <span class="conf-num" style="color:${confColor}">${d.confidence >= 75 ? 'High' : d.confidence >= 55 ? 'Moderate' : 'Low'}</span>
+    </div>
+
+    <div class="levels-grid">
+      <div class="lvl entry">
+        <div class="lvl-lbl">Entry</div>
+        <div class="lvl-val">$${(d.entry||0).toFixed(2)}</div>
+      </div>
+      <div class="lvl stop">
+        <div class="lvl-lbl">Stop Loss</div>
+        <div class="lvl-val">$${(d.stop_loss||0).toFixed(2)}</div>
+      </div>
+      <div class="lvl tp">
+        <div class="lvl-lbl">Take Profit</div>
+        <div class="lvl-val">$${(d.take_profit||0).toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="targets-row">
+      <div class="tgt">
+        <div><div class="tgt-lbl">1-Week Target</div><div class="tgt-val">$${(d.target_1w||0).toFixed(2)}</div></div>
+      </div>
+      <div class="tgt">
+        <div><div class="tgt-lbl">2-Week Target</div><div class="tgt-val">$${(d.target_2w||0).toFixed(2)}</div></div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-badge ${d.risk||'MEDIUM'}">⬤ ${d.risk||'MEDIUM'} RISK</div>
+      <div class="risk-desc">${{LOW:'Blue-chip, stable trend',MEDIUM:'Normal volatility, watch levels',HIGH:'Elevated vol — size down, tight stops'}[d.risk]||''}</div>
+    </div>
+
+    <div class="resp-expl">${d.explanation||'—'}</div>
+
+    ${catHtml}
+
+    <div class="resp-footer">
+      <span style="font-size:10px">ℹ</span>
+      <span class="resp-footer-txt">${modeLabel} · Data-driven insight, not financial advice.</span>
+    </div>
+  </div>`;
+}
+
+async function sendChat(){
+  const input = document.getElementById('chatInput');
+  const q = input.value.trim();
+  if(!q || chatBusy) return;
+
+  chatBusy = true;
+  document.getElementById('chatSend').disabled = true;
+  document.getElementById('cpSugs').style.display = 'none';
+
+  // Append user bubble
+  appendMsg(q, 'msg-user');
+  input.value = '';
+
+  // Show typing
+  const typingEl = showTyping();
+
+  try {
+    const res  = await fetch(`${CHAT_API}?q=${encodeURIComponent(q)}`, {signal: AbortSignal.timeout(60000)});
+    const data = await res.json();
+    typingEl.remove();
+
+    if(data.error){
+      appendMsg(`⚠ ${data.error}`, 'msg-error');
+    } else {
+      appendMsg(buildResponseCard(data), 'msg-system');
+      // Update mode tag
+      const modeTag = document.getElementById('cpModeTag');
+      if(data.mode === 'ai'){
+        modeTag.className = 'cp-mode ai';
+        modeTag.textContent = '✦ AI + Web Search';
+      }
+    }
+  } catch(e) {
+    typingEl.remove();
+    appendMsg(`⚠ Request timed out or server offline. Make sure the server is running.`, 'msg-error');
+  } finally {
+    chatBusy = false;
+    document.getElementById('chatSend').disabled = false;
+    document.getElementById('chatInput').focus();
+  }
+}
+</script>
 </body>
 </html>

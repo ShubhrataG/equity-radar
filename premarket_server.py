@@ -9,7 +9,15 @@ from flask import Flask, jsonify, request as req, send_file
 from flask_cors import CORS
 import yfinance as yf
 from datetime import datetime
-import pytz, threading, webbrowser, time, os
+import pytz, threading, webbrowser, time, os, re, json
+
+# ── Anthropic (optional — enables AI-powered Ask the Market) ──
+try:
+    import anthropic as _anthropic
+    _ANT_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+    _ANT_CLIENT = _anthropic.Anthropic(api_key=_ANT_KEY) if _ANT_KEY else None
+except ImportError:
+    _ANT_CLIENT = None
 
 app = Flask(__name__)
 CORS(app)
@@ -409,6 +417,295 @@ def api_refresh():
 @app.route("/api/tickers")
 def api_tickers():
     return jsonify({"all": TICKERS_UNIQ, "meta": META})
+
+# ── ASK THE MARKET ─────────────────────────────────────────────────────────────
+def _extract_ticker(question):
+    """Pull the most likely ticker symbol from free-text question.
+
+    Priority order:
+      1. Explicit $TICKER (e.g. $LUNR)
+      2. Uppercase words in the ORIGINAL question that match a known ticker
+         — "LUNR" typed in caps = intentional ticker; "now" in lowercase ≠ NOW
+      3. Company name lookup (e.g. "Rocket Lab" → RKLB)
+      4. Last resort: uppercased scan filtered by stopwords
+    """
+    # Words that are common English but NOT stock tickers.
+    # Note: "NOW" is intentionally absent — it IS a valid ticker (ServiceNow).
+    # Step 2 already guards against lowercase "now" by only scanning caps in
+    # the original question, so lowercase common usage never hits this list.
+    STOPWORDS = {
+        "SHOULD","WHAT","WHEN","WHERE","WHY","HOW","THE","FOR","AND","OR",
+        "BUY","SELL","HOLD","WAIT","THIS","GOOD","BEST","NEW","TOP",
+        "WEEK","NEXT","ENTRY","STOP","LOSS","PRICE","TARGET","AT","IN","ON",
+        "IS","ARE","WILL","HAVE","BEEN","CAN","COULD","WOULD","INTO","NEAR",
+        "HIGH","LOW","RICH","RISE","FALL","GIVE","TAKE","MAKE","JUST","EVEN",
+        "VERY","ALSO","ONLY","SOME","WELL","REAL","OVER","FULL","FAST","LONG",
+        "RATE","MOVE","PUSH","PULL","PAST","LAST","EACH","BOTH","SHOW","TELL",
+        "LOOK","SEEM","FEEL","COME","BACK","THEN","THAN","THAT","THEM","THEY",
+        "WITH","FROM","DOES","RISK","HUGE","YEAR","DAYS","STOCK","STOCKS",
+        "DATA","PLAY","SAFE","OPEN","AREA","SIDE","LEAD","BEAT","MISS","KEEP",
+        "GAIN","JUMP","DROP","PUMP","DUMP","BULL","BEAR","FLAT","PEAK","TELL",
+        "ANALYSIS","ABOUT","RIGHT","PRICE","POINT","TRADE","TREND","LEVEL",
+        # Short common English words that must not be mistaken for tickers
+        "BE","ME","MY","IT","DO","IF","BY","UP","GO","NO","SO",
+        "AS","TO","OF","AM","AN","US","WE","HE","RE","ID","I",
+        "HI","OK","VS","CO","TV","LA","HA","EH","AH",
+    }
+
+    # 1. Explicit $TICKER anywhere in original text
+    m = re.search(r'\$([A-Za-z]{1,5})\b', question)
+    if m: return m.group(1).upper()
+
+    TICKER_SET = set(TICKERS_UNIQ)
+
+    # 2. Uppercase words in the ORIGINAL (pre-upcase) question → intentional tickers
+    #    "LUNR" typed in ALL CAPS = deliberate ticker, even if not in our 120-ticker list.
+    #    "now" in lowercase = English word, never reaches this step.
+    caps_in_original = re.findall(r'\b([A-Z]{2,5})\b', question)
+    for word in caps_in_original:
+        if word not in STOPWORDS:
+            return word   # Explicitly capitalised → trust the user
+
+    q_up = question.upper()
+
+    # 3. Company-name lookup (case-insensitive)
+    name_map = {
+        "NVIDIA":"NVDA","APPLE":"AAPL","MICROSOFT":"MSFT","TESLA":"TSLA",
+        "AMAZON":"AMZN","GOOGLE":"GOOGL","ALPHABET":"GOOGL",
+        "AMD":"AMD","MICRON":"MU","PALANTIR":"PLTR","COINBASE":"COIN",
+        "ROCKET LAB":"RKLB","INTUITIVE MACHINES":"LUNR","LUNR":"LUNR",
+        "CROWDSTRIKE":"CRWD","NETFLIX":"NFLX","BROADCOM":"AVGO",
+        "QUALCOMM":"QCOM","INTEL":"INTC","ROBINHOOD":"HOOD",
+        "SERVICENOW":"NOW","SNOWFLAKE":"SNOW","CLOUDFLARE":"NET",
+        "DATADOG":"DDOG","ZSCALER":"ZS","GITLAB":"GTLB",
+        "AST SPACEMOBILE":"ASTS","PLANET LABS":"PL","REDWIRE":"RDW",
+    }
+    for name, sym in name_map.items():
+        if name in q_up: return sym
+
+    # Tickers that are also extremely common English words — only accept them when
+    # explicitly typed in uppercase (step 2) or via company-name map (step 3).
+    # Step 4 (full-string uppercase scan) would false-match e.g. "right now" → NOW.
+    AMBIGUOUS = {"NOW", "AI", "GO", "NET", "GS", "MA", "V", "F", "PL"}
+
+    # 4. Last resort: scan uppercased question, filter stopwords + known tickers only
+    candidates = re.findall(r'\b([A-Z]{1,5})\b', q_up)
+    for c in candidates:
+        if c not in STOPWORDS and c not in AMBIGUOUS and c in TICKER_SET:
+            return c
+
+    # No confident match — caller will ask user to clarify
+    return None
+
+def _rule_based_ask(ticker, question, price, prev, pct, news_titles):
+    """Fallback analysis when no API key is set — uses yfinance data + heuristics."""
+    b, c = bias(pct)
+    # Verdict
+    if   b == "bullish" and c in ("high","medium"): verdict = "BUY"
+    elif b == "bearish" and c in ("high","medium"): verdict = "AVOID"
+    else:                                            verdict = "WAIT"
+    # Confidence
+    conf_map = {"high": 78, "medium": 62, "low": 45}
+    base_conf = conf_map.get(c, 50)
+    confidence = min(88, base_conf + (5 if abs(pct) > 2 else 0))
+    # Levels
+    entry       = round(price, 2)
+    stop_loss   = round(price * (0.935 if b == "bullish" else 0.97), 2)
+    take_profit = round(price * (1.08  if b == "bullish" else 1.04), 2)
+    target_1w   = round(price * (1.055 if b == "bullish" else 0.97), 2)
+    target_2w   = round(price * (1.10  if b == "bullish" else 0.94), 2)
+    # Risk
+    risk = "HIGH" if abs(pct) > 4 else ("MEDIUM" if abs(pct) > 1.5 else "LOW")
+    # Explanation
+    arrow = "▲" if pct >= 0 else "▼"
+    news_str = f' Latest catalyst: "{news_titles[0]}".' if news_titles else ""
+    explanation = (
+        f"{ticker} is currently ${price:.2f} ({arrow}{abs(pct):.2f}% vs prev close ${prev:.2f}). "
+        f"Bias is {b} with {c} confidence based on current momentum.{news_str} "
+        f"{'Buyers are in control — the setup favors continuation if it holds above $' + str(stop_loss) + '.' if b=='bullish' else 'Sellers have the edge — risky to step in front of this move without a clear reversal signal.'} "
+        f"{'Target $' + str(take_profit) + ' over the next 1-2 weeks if momentum holds.' if verdict=='BUY' else 'Wait for stabilisation around $' + str(take_profit) + ' before committing.'}"
+    )
+    name, sector, _ = META.get(ticker, (ticker, "Unknown", "default"))
+    return {
+        "ticker": ticker, "name": name, "sector": sector,
+        "current_price": price, "verdict": verdict, "confidence": confidence,
+        "target_1w": target_1w, "target_2w": target_2w,
+        "entry": entry, "stop_loss": stop_loss, "take_profit": take_profit,
+        "risk": risk, "explanation": explanation,
+        "catalysts": news_titles[:3],
+        "mode": "rule-based",
+    }
+
+def _claude_ask(ticker, question, market_ctx, news_titles):
+    """Full AI analysis via Claude claude-sonnet-4-6 with web search."""
+    system = """You are a quantitative market analyst embedded in a professional stock intelligence terminal called Equity Radar.
+
+Given a user question about a stock, you:
+1. Use web_search to find the LATEST news, analyst price targets, earnings surprises, and technical analysis
+2. Combine that with provided live market data
+3. Return ONLY a single valid JSON object — no markdown fences, no extra text — in this exact schema:
+
+{
+  "ticker": "SYMBOL",
+  "name": "Full Company Name",
+  "sector": "Sector",
+  "current_price": 0.00,
+  "verdict": "BUY" | "WAIT" | "AVOID",
+  "confidence": 0-100,
+  "target_1w": 0.00,
+  "target_2w": 0.00,
+  "entry": 0.00,
+  "stop_loss": 0.00,
+  "take_profit": 0.00,
+  "risk": "LOW" | "MEDIUM" | "HIGH",
+  "explanation": "2-3 sentence plain English. Cite specific price levels, catalysts, and what to watch. Be direct.",
+  "catalysts": ["top catalyst 1", "top catalyst 2", "top catalyst 3"],
+  "sources": ["headline or source 1", "source 2"],
+  "mode": "ai"
+}
+
+Verdict rules:
+- BUY: bullish momentum, good risk/reward, catalyst confirmed, entry makes sense now
+- WAIT: mixed signals, better entry likely, catalyst pending, or unclear direction
+- AVOID: bearish trend, poor risk/reward, negative catalyst, or too speculative
+
+Levels: entry should be near current price or on a pullback; stop_loss 4-8% below entry; take_profit 7-15% above entry.
+Risk: LOW = large-cap stable; MEDIUM = mid-cap or elevated vol; HIGH = small-cap, biotech, crypto-adjacent, or gap stock."""
+
+    user_msg = f"""Question: "{question}"
+
+Live market data:
+{market_ctx}
+
+Search the web for latest news and analyst targets for {ticker}, then return your JSON analysis."""
+
+    resp = _ANT_CLIENT.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1200,
+        system=system,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    # Extract the final text block
+    raw = ""
+    for block in resp.content:
+        if hasattr(block, "text"):
+            raw += block.text
+    # Parse JSON (strip any accidental markdown)
+    raw = re.sub(r"```[a-z]*\n?", "", raw).strip()
+    m = re.search(r'\{[\s\S]*\}', raw)
+    if not m:
+        raise ValueError(f"No JSON in response: {raw[:300]}")
+    return json.loads(m.group())
+
+@app.route("/api/ask")
+def api_ask():
+    question = req.args.get("q", "").strip()
+    if not question:
+        return jsonify({"error": "Empty question"}), 400
+
+    # Health-check ping (used by frontend to detect AI mode)
+    if question.lower() == "ping":
+        return jsonify({"mode": "ai" if _ANT_CLIENT else "rule-based"})
+
+    # 1. Extract ticker
+    ticker = _extract_ticker(question)
+    if not ticker:
+        return jsonify({
+            "error": (
+                "I couldn't identify a stock ticker in your question. "
+                "Please name the stock — e.g. \"Should I take profit on LUNR at $3.16?\" "
+                "or \"Is NVDA a good entry right now?\""
+            )
+        }), 400
+
+    # 2. Fetch live market data
+    price, prev, pct, news_titles = 0, 0, 0, []
+    market_ctx = ""
+    try:
+        t  = yf.Ticker(ticker)
+        fi = t.fast_info
+        prev  = getattr(fi, "previous_close", None) or 0
+        try:
+            hist = t.history(period="1d", interval="1m", prepost=True)
+            price = float(hist.iloc[-1]["Close"]) if not hist.empty else 0
+        except Exception:
+            price = getattr(fi, "last_price", None) or 0
+        if not prev: prev = price
+        pct = round(((price - prev) / prev) * 100, 2) if prev else 0
+
+        # ── Price sanity check ─────────────────────────────────────────────────
+        # If the user mentioned a specific price (e.g. "at 3.16") and it's way off
+        # from what we fetched, the ticker is probably wrong — ask for clarification.
+        price_mention = re.search(r'(?<!\w)\$?(\d{1,6}\.?\d{0,4})(?!\w)', question)
+        if price_mention and price > 0:
+            mentioned = float(price_mention.group(1))
+            # Skip: tiny numbers, year-like integers (2000-2035), and very large (>50k)
+            is_year = 2000 <= mentioned <= 2035 and mentioned == int(mentioned)
+            if mentioned >= 0.5 and not is_year and mentioned <= 50000:
+                ratio = max(price, mentioned) / min(price, mentioned)
+                if ratio > 10:
+                    return jsonify({
+                        "error": (
+                            f"You mentioned a price around ${mentioned:.2f} but {ticker} is "
+                            f"currently at ${price:.2f} — those don't match. "
+                            f"Could you name the stock you're watching? "
+                            f"e.g. \"Should I take profit on LUNR at ${mentioned:.2f}?\""
+                        )
+                    }), 400
+
+        # ── News headlines — relevance-filtered ───────────────────────────────
+        name_for_filter, sector_for_filter, _ = META.get(ticker, (ticker, "Unknown", "default"))
+        # Build keywords: ticker + first meaningful word(s) of company name
+        skip_generic = {"CORP","INC","THE","HOLDINGS","TECHNOLOGIES","CORPORATION",
+                        "COMPANY","GROUP","GLOBAL","SYSTEMS","TECHNOLOGY","SCIENCES"}
+        name_keywords = [
+            part for part in name_for_filter.upper().split()
+            if len(part) >= 4 and part not in skip_generic
+        ][:2]
+        relevant_keys = [ticker] + name_keywords
+        # Compile word-boundary patterns so "NOW" doesn't match inside "SNOWFLAKE"
+        rel_patterns = [re.compile(r'\b' + re.escape(kw) + r'\b') for kw in relevant_keys]
+
+        all_news = []
+        for n in (t.news or [])[:10]:
+            ct = n.get("content", {})
+            titl = ct.get("title", "")
+            if not titl: continue
+            titl_up = titl.upper()
+            # Keep if any relevant keyword appears as a whole word in the headline
+            if any(p.search(titl_up) for p in rel_patterns):
+                news_titles.append(titl)
+            all_news.append(titl)
+
+        # If relevance filter was too strict, fall back to all headlines
+        if not news_titles and all_news:
+            news_titles = all_news[:4]
+
+        name, sector, _ = META.get(ticker, (ticker, "Unknown", "default"))
+        market_ctx = (
+            f"Ticker: {ticker} ({name}) | Sector: {sector}\n"
+            f"Current price: ${price:.2f} | Prev close: ${prev:.2f} | Change: {pct:+.2f}%\n"
+            f"Recent headlines: {'; '.join(news_titles[:3]) if news_titles else 'none available'}"
+        )
+    except Exception as e:
+        market_ctx = f"Live data fetch error for {ticker}: {e}"
+
+    # 3. Generate analysis
+    try:
+        if _ANT_CLIENT:
+            result = _claude_ask(ticker, question, market_ctx, news_titles)
+            # Fill in live price if Claude left it as 0
+            if result.get("current_price", 0) == 0 and price:
+                result["current_price"] = round(price, 2)
+        else:
+            result = _rule_based_ask(ticker, question, price, prev, pct, news_titles)
+        return jsonify(result)
+    except Exception as e:
+        # Ultimate fallback
+        if price:
+            return jsonify(_rule_based_ask(ticker, question, price, prev, pct, news_titles))
+        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
 
 @app.route("/")
 def index():
