@@ -447,7 +447,8 @@ canvas#pieChart{border-radius:50%}
 <!-- BEST BUY + HEATMAP -->
 <div class="row2-eq">
   <div class="spotlight" id="spotlightBox">
-    <div class="spot-badge">🏆 Best Buy This Week</div>
+    <div class="spot-badge">⚡ Top Conviction Setup</div>
+    <div style="font-size:10px;color:#5a6478;margin-top:2px;margin-bottom:6px;font-family:var(--mono)">Highest confidence × momentum score this session · updates each refresh</div>
     <div style="display:flex;align-items:baseline;gap:10px">
       <div class="spot-ticker" id="spotTicker">—</div>
       <div style="display:flex;align-items:center">
@@ -776,6 +777,10 @@ function renderSentiment(d){
 }
 
 // ── BEST BUY SPOTLIGHT ──
+// Hysteresis state — prevents constant flip-flopping when two stocks are neck-and-neck
+let _spotlightTicker = null;
+let _spotlightScore  = 0;
+
 function renderSpotlight(data){
   const stocks = Object.values(data.stocks||{});
   // Score: bullish high conf = 3, medium = 2, low = 1; multiply by pct change
@@ -787,16 +792,34 @@ function renderSpotlight(data){
     }))
     .sort((a,b) => b.score - a.score);
 
-  const best = scored[0];
-  if(!best){ document.getElementById('spotWhy').textContent = 'No strong bullish signal today.'; return; }
+  if(!scored.length){
+    document.getElementById('spotWhy').textContent = 'No strong bullish signal this session.';
+    return;
+  }
+
+  // Hysteresis: only unseat the current leader if the new top score is
+  // at least 20% higher. Prevents flickering when stocks trade neck-and-neck.
+  let best = scored[0];
+  if(_spotlightTicker && best.ticker !== _spotlightTicker){
+    const prev = scored.find(s => s.ticker === _spotlightTicker);
+    if(prev && prev.score > 0 && best.score < prev.score * 1.20){
+      best = prev;   // keep the incumbent — challenger not convincingly ahead
+    }
+  }
+  _spotlightTicker = best.ticker;
+  _spotlightScore  = best.score;
 
   document.getElementById('spotTicker').textContent = best.ticker;
   document.getElementById('spotName').textContent   = best.name;
   document.getElementById('spotPrice').textContent  = fP(best.price);
   document.getElementById('spotChg').textContent    = `+${fN(best.change_pct)}%`;
 
-  // Runners up
-  const runners = scored.slice(1,4).map(s=>`<b>${s.ticker}</b> +${fN(s.change_pct)}%`).join(' · ');
+  // Runners up (exclude the current leader from the list)
+  const runners = scored
+    .filter(s => s.ticker !== best.ticker)
+    .slice(0, 3)
+    .map(s => `<b>${s.ticker}</b> +${fN(s.change_pct)}%`)
+    .join(' · ');
   document.getElementById('spotWhy').innerHTML =
     `<b>Why:</b> ${best.driver}<br><br><b>Also watching:</b> ${runners||'—'}`;
 }
