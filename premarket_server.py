@@ -259,6 +259,40 @@ def watch(price, prev, pct):
     if pct < -0.3: return f"${round(price*.975,2)} flush · ${round(prev,2)} reclaim"
     return f"${round(price*.99,2)}–${round(price*1.01,2)} range · ${round(prev,2)} pivot"
 
+def setup_score(pct, vol_ratio, ma_dist, news_count):
+    """
+    Predictive setup score 0-100 — rewards stocks with strong PRE-MOVE signals
+    rather than stocks that have already run.
+      - Volume surge vs 3-month avg daily volume (40 pts): unusual volume = informed buying
+      - Price near 50-day MA (25 pts): breakout zone scores highest
+      - Move size sweet spot (20 pts): penalises extended moves (already ran)
+      - Fresh news catalyst (15 pts): fundamental backing for the setup
+    """
+    s = 0
+    # Volume surge — strongest predictor
+    if   vol_ratio >= 0.30: s += 40
+    elif vol_ratio >= 0.15: s += 30
+    elif vol_ratio >= 0.08: s += 20
+    elif vol_ratio >= 0.03: s += 10
+    # Price position vs 50-day MA
+    if   0   <= ma_dist <= 3:  s += 25   # just above MA = breakout zone
+    elif 3   <  ma_dist <= 8:  s += 18   # healthy above MA
+    elif ma_dist > 8:          s += 8    # extended above MA
+    elif -3  <= ma_dist <  0:  s += 15   # testing MA from below — watch closely
+    # Move-size sweet spot: not too small, not already extended
+    if pct > 0:
+        ap = abs(pct)
+        if   0.20 <= ap <= 1.5:  s += 20   # sweet spot
+        elif 1.5  <  ap <= 2.5:  s += 14
+        elif 2.5  <  ap <= 3.5:  s += 7
+        elif ap > 3.5:           s += 2    # already ran hard — risky entry
+        else:                    s += 4
+    # Fresh catalyst
+    if   news_count >= 3: s += 15
+    elif news_count == 2: s += 10
+    elif news_count == 1: s += 6
+    return min(s, 100)
+
 def fetch(sym):
     try:
         t  = yf.Ticker(sym)
@@ -273,6 +307,7 @@ def fetch(sym):
         disp      = 0
         session   = "closed"
         price_age = "—"
+        hist      = None
         try:
             hist = t.history(period="1d", interval="1m", prepost=True)
             if not hist.empty:
@@ -319,8 +354,31 @@ def fetch(sym):
         except: pass
 
         name, sector, skey = META.get(sym, (sym, "Other", "default"))
-        is_pre = (session == "pre")
+        is_pre  = (session == "pre")
         is_post = (session == "post")
+
+        # ── Predictive setup metrics (no extra API calls — reuse hist + fast_info) ──
+        vol_ratio = 0.0
+        ma_dist   = 0.0
+        try:
+            avg_vol   = getattr(fi, "three_month_average_volume", None) or 0
+            today_vol = int(hist["Volume"].sum()) if hist is not None and not hist.empty else 0
+            if avg_vol > 0 and today_vol > 0:
+                vol_ratio = round(today_vol / avg_vol, 4)
+        except Exception:
+            pass
+        try:
+            ma50 = getattr(fi, "fifty_day_average", None) or 0
+            if ma50 > 0 and disp > 0:
+                ma_dist = round((disp - ma50) / ma50 * 100, 2)
+        except Exception:
+            pass
+
+        ss = setup_score(pct, vol_ratio, ma_dist, len(news))
+        if   ss >= 70: ss_label = "Prime Setup"
+        elif ss >= 50: ss_label = "Building"
+        elif ss >= 30: ss_label = "Watch"
+        else:          ss_label = "Quiet"
 
         return {
             "ticker": sym, "name": name,
@@ -332,6 +390,8 @@ def fetch(sym):
             "sector": sector, "sector_key": skey,
             "news": news[:3], "is_pre": is_pre, "is_post": is_post,
             "session": session, "price_age": price_age,
+            "setup_score": ss, "setup_label": ss_label,
+            "vol_ratio": vol_ratio, "ma_dist": round(ma_dist, 2),
         }
     except Exception as e:
         name, sector, skey = META.get(sym, (sym, "Other", "default"))
@@ -343,6 +403,8 @@ def fetch(sym):
             "key_level": "—", "sector": sector, "sector_key": skey,
             "news": [], "is_pre": False, "is_post": False,
             "session": "error", "price_age": "—",
+            "setup_score": 0, "setup_label": "Quiet",
+            "vol_ratio": 0.0, "ma_dist": 0.0,
         }
 
 def idx(sym):

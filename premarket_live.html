@@ -209,6 +209,18 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .watch-row{display:flex;align-items:center;gap:6px}
 .watch-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);font-weight:600;white-space:nowrap}
 .watch-val{font-family:var(--mono);font-size:10.5px;color:var(--cyan);background:rgba(34,211,238,.07);padding:2px 8px;border-radius:4px;border:1px solid rgba(34,211,238,.14);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+/* ── SETUP SCORE ── */
+.setup-row{margin-top:9px;display:flex;align-items:center;gap:7px}
+.setup-lbl{font-size:8px;text-transform:uppercase;letter-spacing:.8px;color:var(--t2);font-weight:700;white-space:nowrap;flex-shrink:0}
+.setup-bar-wrap{flex:1;height:5px;background:rgba(255,255,255,.07);border-radius:100px;overflow:hidden}
+.setup-bar-fill{height:100%;border-radius:100px;transition:width .5s ease}
+.setup-score-num{font-family:var(--mono);font-size:9.5px;font-weight:700;flex-shrink:0;min-width:22px;text-align:right}
+.setup-badge{font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:1px 6px;border-radius:4px;flex-shrink:0;white-space:nowrap}
+.setup-badge.prime{background:rgba(124,106,255,.18);border:1px solid rgba(124,106,255,.35);color:#a898ff}
+.setup-badge.building{background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.22);color:var(--cyan)}
+.setup-badge.watch{background:rgba(247,201,72,.08);border:1px solid rgba(247,201,72,.18);color:var(--neut)}
+.setup-badge.quiet{background:rgba(255,255,255,.04);border:1px solid var(--b0);color:var(--t2)}
+.setup-badge.extended{background:rgba(255,63,94,.1);border:1px solid rgba(255,63,94,.2);color:var(--bear)}
 .add-to-port{font-size:9px;padding:3px 9px;border-radius:5px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.18);color:var(--blue);cursor:pointer;margin-top:8px;width:100%;font-family:var(--sans);font-weight:600;transition:all .15s}
 .add-to-port:hover{background:rgba(59,130,246,.16)}
 
@@ -491,6 +503,7 @@ canvas#pieChart{border-radius:50%}
   <div style="display:flex;gap:8px;align-items:center">
     <div class="sort-lbl">Sort:</div>
     <button class="btn btn-ghost" onclick="sortCards('bias')"   id="sort-bias">Bias ▾</button>
+    <button class="btn btn-ghost" onclick="sortCards('setup')"  id="sort-setup">📡 Setup Score</button>
     <button class="btn btn-ghost" onclick="sortCards('change')" id="sort-chg">% Change</button>
     <button class="btn btn-ghost" onclick="sortCards('alpha')"  id="sort-alp">A–Z</button>
     <div class="sec-badge" id="cardCount">—</div>
@@ -783,13 +796,10 @@ let _spotlightScore  = 0;
 
 function renderSpotlight(data){
   const stocks = Object.values(data.stocks||{});
-  // Score: bullish high conf = 3, medium = 2, low = 1; multiply by pct change
+  // Use setup_score (predictive) not change_pct (lagging) to rank conviction
   const scored = stocks
     .filter(s => s.bias === 'bullish' && s.price > 0 && s.change_pct > 0)
-    .map(s => ({
-      ...s,
-      score: (s.confidence==='high'?3:s.confidence==='medium'?2:1) * s.change_pct
-    }))
+    .map(s => ({ ...s, score: s.setup_score || 0 }))
     .sort((a,b) => b.score - a.score);
 
   if(!scored.length){
@@ -803,7 +813,7 @@ function renderSpotlight(data){
   if(_spotlightTicker && best.ticker !== _spotlightTicker){
     const prev = scored.find(s => s.ticker === _spotlightTicker);
     if(prev && prev.score > 0 && best.score < prev.score * 1.20){
-      best = prev;   // keep the incumbent — challenger not convincingly ahead
+      best = prev;
     }
   }
   _spotlightTicker = best.ticker;
@@ -814,14 +824,19 @@ function renderSpotlight(data){
   document.getElementById('spotPrice').textContent  = fP(best.price);
   document.getElementById('spotChg').textContent    = `+${fN(best.change_pct)}%`;
 
-  // Runners up (exclude the current leader from the list)
+  // Build a setup context line
+  const volPct  = best.vol_ratio  ? `${(best.vol_ratio*100).toFixed(0)}% of avg daily vol` : null;
+  const maDist  = best.ma_dist    ? `${best.ma_dist > 0 ? '+' : ''}${fN(best.ma_dist)}% vs 50MA` : null;
+  const ctxParts = [volPct, maDist].filter(Boolean);
+  const ctxLine  = ctxParts.length ? `<br><span style="color:rgba(0,212,126,.6);font-size:10px">Setup signals: ${ctxParts.join(' · ')} · score ${best.setup_score}/100</span>` : '';
+
   const runners = scored
     .filter(s => s.ticker !== best.ticker)
     .slice(0, 3)
-    .map(s => `<b>${s.ticker}</b> +${fN(s.change_pct)}%`)
+    .map(s => `<b>${s.ticker}</b> <span style="color:rgba(255,255,255,.4);font-size:9px">score ${s.setup_score}</span>`)
     .join(' · ');
   document.getElementById('spotWhy').innerHTML =
-    `<b>Why:</b> ${best.driver}<br><br><b>Also watching:</b> ${runners||'—'}`;
+    `<b>Why:</b> ${best.driver}${ctxLine}<br><br><b>Also setting up:</b> ${runners||'—'}`;
 }
 
 // ── SECTOR HEATMAP ──
@@ -870,8 +885,30 @@ function renderHeatmap(data){
 // ── BUILD CARD ──
 function buildCard(s){
   if(!s) return '';
-  const p=s.change_pct||0;
-  return `<div class="card ${s.bias||'neutral'}" data-sector="${s.sector||''}" data-bias="${s.bias}" data-pct="${p}" data-ticker="${s.ticker}">
+  const p  = s.change_pct || 0;
+  const ss = s.setup_score || 0;
+  // Badge class and label — direction-aware
+  const isBearish  = (s.bias === 'bearish');
+  const isExtended = p > 3.5 && !isBearish;
+  let badgeClass, badgeText;
+  if(isBearish && ss >= 55){
+    badgeClass = 'extended'; badgeText = '⬇ Short Setup';
+  } else if(isExtended){
+    badgeClass = 'extended'; badgeText = '🔥 Running';
+  } else if(!isBearish && ss >= 70){
+    badgeClass = 'prime';    badgeText = '📡 Prime Setup';
+  } else if(!isBearish && ss >= 50){
+    badgeClass = 'building'; badgeText = '◈ Building';
+  } else if(ss >= 30){
+    badgeClass = 'watch';    badgeText = '◎ Watch';
+  } else {
+    badgeClass = 'quiet';    badgeText = '— Quiet';
+  }
+  // Bar colour: purple for high, cyan for mid, muted for low
+  const barColor = ss >= 65 ? 'rgba(124,106,255,.8)' : ss >= 45 ? 'rgba(34,211,238,.7)' : ss >= 25 ? 'rgba(247,201,72,.6)' : 'rgba(255,255,255,.18)';
+  // Score colour
+  const numColor = ss >= 65 ? '#a898ff' : ss >= 45 ? 'var(--cyan)' : ss >= 25 ? 'var(--neut)' : 'var(--t2)';
+  return `<div class="card ${s.bias||'neutral'}" data-sector="${s.sector||''}" data-bias="${s.bias}" data-pct="${p}" data-ticker="${s.ticker}" data-setup="${ss}">
     <div class="stag ${s.sector_key||'default'}">${s.sector||''}</div>
     <div class="card-head">
       <div>
@@ -893,6 +930,12 @@ function buildCard(s){
       <span class="watch-lbl">🎯 Watch</span>
       <span class="watch-val" title="${s.key_level||''}">${s.key_level||'—'}</span>
     </div>
+    <div class="setup-row" title="Setup Score: volume surge + price vs 50MA + move size + catalyst. Higher = stronger pre-move signal.">
+      <span class="setup-lbl">Setup</span>
+      <div class="setup-bar-wrap"><div class="setup-bar-fill" style="width:${ss}%;background:${barColor}"></div></div>
+      <span class="setup-score-num" style="color:${numColor}">${ss}</span>
+      <span class="setup-badge ${badgeClass}">${badgeText}</span>
+    </div>
     <button class="add-to-port" onclick="quickAddPf('${s.ticker}',${s.price})">＋ Add to Portfolio</button>
   </div>`;
 }
@@ -906,6 +949,8 @@ function getFilteredSorted(data){
   if(currentSort === 'bias'){
     const order = {bullish:0,neutral:1,bearish:2};
     list.sort((a,b) => (order[a.bias]??1) - (order[b.bias]??1) || b.change_pct - a.change_pct);
+  } else if(currentSort === 'setup'){
+    list.sort((a,b) => (b.setup_score||0) - (a.setup_score||0));
   } else if(currentSort === 'change'){
     list.sort((a,b) => b.change_pct - a.change_pct);
   } else {
@@ -930,8 +975,8 @@ function filterSector(sector, el){
 
 function sortCards(by){
   currentSort = by;
-  ['bias','chg','alp'].forEach(k => { const b=document.getElementById('sort-'+k); if(b)b.classList.remove('active'); });
-  const map = {bias:'sort-bias',change:'sort-chg',alpha:'sort-alp'};
+  ['bias','setup','chg','alp'].forEach(k => { const b=document.getElementById('sort-'+k); if(b)b.classList.remove('active'); });
+  const map = {bias:'sort-bias',setup:'sort-setup',change:'sort-chg',alpha:'sort-alp'};
   const el = document.getElementById(map[by]);
   if(el) el.classList.add('active');
   if(allData) renderCards(allData);
