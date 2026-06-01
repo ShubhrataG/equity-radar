@@ -1487,8 +1487,24 @@ window.addEventListener('DOMContentLoaded', ()=>{
 .risk-badge.HIGH  {background:rgba(255,63,94,.1); color:#ff3f5e;border:1px solid rgba(255,63,94,.25)}
 .risk-desc{font-size:10px;color:#8b879e}
 
+/* Upside probability bar */
+.uprob-row{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.uprob-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:#8b879e;font-weight:700;white-space:nowrap}
+.uprob-track{flex:1;height:7px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;position:relative}
+.uprob-fill{height:100%;border-radius:4px;transition:width 1s ease}
+.uprob-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;white-space:nowrap}
+.uprob-sublbl{font-size:9px;color:#8b879e;white-space:nowrap}
+
+/* Bull / Bear case */
+.cases-row{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid rgba(255,255,255,.06)}
+.case-box{padding:9px 12px;border-right:1px solid rgba(255,255,255,.06)}
+.case-box:last-child{border-right:none}
+.case-lbl{font-size:8px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;margin-bottom:4px}
+.case-lbl.bull{color:rgba(0,212,126,.7)}.case-lbl.bear{color:rgba(255,63,94,.7)}
+.case-txt{font-size:10.5px;color:#8b879e;line-height:1.5}
+
 /* Explanation */
-.resp-expl{padding:11px 14px;font-size:11.5px;color:#b0b8cc;line-height:1.65;border-bottom:1px solid rgba(255,255,255,.06)}
+.resp-expl{padding:11px 14px;font-size:11.5px;color:#b0b8cc;line-height:1.75;border-bottom:1px solid rgba(255,255,255,.06)}
 
 /* Catalysts */
 .catalysts{padding:9px 14px;display:flex;flex-direction:column;gap:4px}
@@ -1669,12 +1685,37 @@ function buildGeneralCard(d){
 function buildResponseCard(d){
   const vIcon = {BUY:'▲', WAIT:'◆', AVOID:'▼'}[d.verdict] || '◆';
   const confColor = d.confidence >= 75 ? '#00d47e' : d.confidence >= 55 ? '#f7c948' : '#ff3f5e';
-  const chgVal = d.current_price && d.entry
-    ? ((d.take_profit - d.entry)/d.entry*100).toFixed(1) : '—';
+
+  // Upside probability
+  const up = d.upside_probability ?? null;
+  const upColor = up === null ? '#8b879e'
+    : up >= 65 ? '#00d47e' : up >= 50 ? '#f7c948' : '#ff3f5e';
+  const upLabel = up === null ? '—'
+    : up >= 70 ? 'Likely up' : up >= 55 ? 'Slight edge up' : up >= 45 ? 'Coin flip' : 'Likely down';
+  const upHtml = up !== null ? `
+    <div class="uprob-row">
+      <span class="uprob-lbl">Upside %</span>
+      <div class="uprob-track"><div class="uprob-fill" style="width:${up}%;background:${upColor}"></div></div>
+      <span class="uprob-num" style="color:${upColor}">${up}%</span>
+      <span class="uprob-sublbl">${upLabel}</span>
+    </div>` : '';
+
+  // Bull / bear case
+  const casesHtml = (d.bull_case || d.bear_case) ? `
+    <div class="cases-row">
+      <div class="case-box">
+        <div class="case-lbl bull">▲ Bull Case</div>
+        <div class="case-txt">${d.bull_case || '—'}</div>
+      </div>
+      <div class="case-box">
+        <div class="case-lbl bear">▼ Bear Case</div>
+        <div class="case-txt">${d.bear_case || '—'}</div>
+      </div>
+    </div>` : '';
 
   const catalysts = (d.catalysts||[]).filter(Boolean).slice(0,3);
   const catHtml = catalysts.length
-    ? `<div class="catalysts">${catalysts.map(c=>`<div class="cat-item">${c.length>90?c.slice(0,90)+'…':c}</div>`).join('')}</div>`
+    ? `<div class="catalysts">${catalysts.map(c=>`<div class="cat-item">${c.length>110?c.slice(0,110)+'…':c}</div>`).join('')}</div>`
     : '';
 
   const modeLabel = d.mode === 'ai'
@@ -1697,16 +1738,18 @@ function buildResponseCard(d){
       <div class="verdict ${d.verdict}">${vIcon} ${d.verdict}</div>
       <div style="flex:1"></div>
       <div style="text-align:right">
-        <div style="font-size:9px;color:#8b879e;text-transform:uppercase;letter-spacing:.6px">Confidence</div>
+        <div style="font-size:9px;color:#8b879e;text-transform:uppercase;letter-spacing:.6px">Conviction</div>
         <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:800;color:${confColor}">${d.confidence}%</div>
       </div>
     </div>
 
     <div class="conf-row">
-      <span class="conf-lbl">Conviction</span>
+      <span class="conf-lbl">Confidence</span>
       <div class="conf-track"><div class="conf-fill" style="width:${d.confidence}%;background:${confColor}"></div></div>
       <span class="conf-num" style="color:${confColor}">${d.confidence >= 75 ? 'High' : d.confidence >= 55 ? 'Moderate' : 'Low'}</span>
     </div>
+
+    ${upHtml}
 
     <div class="levels-grid">
       <div class="lvl entry">
@@ -1738,6 +1781,8 @@ function buildResponseCard(d){
     </div>
 
     <div class="resp-expl">${d.explanation||'—'}</div>
+
+    ${casesHtml}
 
     ${catHtml}
 

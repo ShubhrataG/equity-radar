@@ -587,13 +587,21 @@ def _rule_based_ask(ticker, question, price, prev, pct, news_titles):
         f"{'Buyers are in control — the setup favors continuation if it holds above $' + str(stop_loss) + '.' if b=='bullish' else 'Sellers have the edge — risky to step in front of this move without a clear reversal signal.'} "
         f"{'Target $' + str(take_profit) + ' over the next 1-2 weeks if momentum holds.' if verdict=='BUY' else 'Wait for stabilisation around $' + str(take_profit) + ' before committing.'}"
     )
+    # Simple upside probability: bullish high→78, medium→63, low→52; bearish inverted
+    upside_prob = {"high": 75, "medium": 62, "low": 52}.get(c, 50)
+    if b == "bearish": upside_prob = 100 - upside_prob
+    bull_case = f"Momentum intact above ${stop_loss} — continuation to ${take_profit} is the base case." if b == "bullish" else f"Reclaim of ${prev:.2f} previous close would signal reversal potential."
+    bear_case = f"Loses ${stop_loss} support — move accelerates to the downside." if b == "bullish" else f"No clear catalyst for reversal — sellers remain in control below ${prev:.2f}."
+
     name, sector, _ = META.get(ticker, (ticker, "Unknown", "default"))
     return {
         "ticker": ticker, "name": name, "sector": sector,
         "current_price": price, "verdict": verdict, "confidence": confidence,
+        "upside_probability": upside_prob,
         "target_1w": target_1w, "target_2w": target_2w,
         "entry": entry, "stop_loss": stop_loss, "take_profit": take_profit,
         "risk": risk, "explanation": explanation,
+        "bull_case": bull_case, "bear_case": bear_case,
         "catalysts": news_titles[:3],
         "mode": "rule-based",
     }
@@ -658,7 +666,7 @@ def _claude_ask(ticker, question, market_ctx, news_titles):
     system = """You are a quantitative market analyst embedded in a professional stock intelligence terminal called Equity Radar.
 
 Given a user question about a stock, you:
-1. Use web_search to find the LATEST news, analyst price targets, earnings surprises, and technical analysis
+1. Use web_search to find the LATEST news, analyst price targets, earnings data, short interest, and technical analysis
 2. Combine that with provided live market data
 3. Return ONLY a single valid JSON object — no markdown fences, no extra text — in this exact schema:
 
@@ -669,36 +677,46 @@ Given a user question about a stock, you:
   "current_price": 0.00,
   "verdict": "BUY" | "WAIT" | "AVOID",
   "confidence": 0-100,
+  "upside_probability": 0-100,
   "target_1w": 0.00,
   "target_2w": 0.00,
   "entry": 0.00,
   "stop_loss": 0.00,
   "take_profit": 0.00,
   "risk": "LOW" | "MEDIUM" | "HIGH",
-  "explanation": "2-3 sentence plain English. Cite specific price levels, catalysts, and what to watch. Be direct.",
+  "explanation": "4-6 sentences. Directly answer what the user asked. Cover: (1) what the stock is doing right now and why, (2) key catalyst or risk driving the move, (3) estimated probability of going up and why (cite technicals, analyst targets, or news), (4) what level to watch as confirmation or failure. Be specific with price levels and percentages.",
+  "bull_case": "One sentence: the single best reason it goes up from here.",
+  "bear_case": "One sentence: the single biggest risk that kills the trade.",
   "catalysts": ["top catalyst 1", "top catalyst 2", "top catalyst 3"],
   "sources": ["headline or source 1", "source 2"],
   "mode": "ai"
 }
 
-Verdict rules:
-- BUY: bullish momentum, good risk/reward, catalyst confirmed, entry makes sense now
-- WAIT: mixed signals, better entry likely, catalyst pending, or unclear direction
-- AVOID: bearish trend, poor risk/reward, negative catalyst, or too speculative
+upside_probability: honest estimate (0-100) of the chance the stock is higher in 1-2 weeks.
+  - Base on: technical trend (above/below key MAs), analyst consensus, recent earnings/news catalyst, sector momentum
+  - 70-85 = strong setup with clear catalyst and trend support
+  - 50-65 = mixed signals, coin-flip range
+  - 30-45 = more likely down than up
+  - Below 30 = strong bear case
 
-Levels: entry should be near current price or on a pullback; stop_loss 4-8% below entry; take_profit 7-15% above entry.
-Risk: LOW = large-cap stable; MEDIUM = mid-cap or elevated vol; HIGH = small-cap, biotech, crypto-adjacent, or gap stock."""
+Verdict rules:
+- BUY: upside_probability >= 60, bullish momentum, good risk/reward, catalyst confirmed
+- WAIT: upside_probability 45-60, mixed signals, better entry likely or catalyst pending
+- AVOID: upside_probability < 45, bearish trend, poor risk/reward, or too speculative
+
+Levels: entry near current price or logical pullback; stop_loss 4-8% below entry; take_profit 8-18% above entry.
+Risk: LOW = large-cap stable; MEDIUM = mid-cap or elevated vol; HIGH = small-cap, biotech, crypto-adjacent, or speculative."""
 
     user_msg = f"""Question: "{question}"
 
 Live market data:
 {market_ctx}
 
-Search the web for latest news and analyst targets for {ticker}, then return your JSON analysis."""
+Search the web now for the latest news, analyst price targets, and technical levels for {ticker}. Then return your full JSON analysis answering the user's specific question."""
 
     resp = _ANT_CLIENT.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1200,
+        max_tokens=1600,
         system=system,
         tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
         messages=[{"role": "user", "content": user_msg}],
