@@ -6,6 +6,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Data](https://img.shields.io/badge/data-Yahoo%20Finance%20%7E15min%20delay-yellow)
 
+> 🖥️ **[Open animated terminal preview →](preview.html)** — clone the repo and open `preview.html` in your browser to see the full UI before running the server.
+
 ---
 
 ## What It Does

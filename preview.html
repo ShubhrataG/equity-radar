@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Equity Radar — Terminal Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#06060a;
+  --bg2:#0d0d18;
+  --bg3:#080814;
+  --green:#6affc5;
+  --red:#ff6b6b;
+  --amber:#ffd666;
+  --purple:#7c6aff;
+  --muted:rgba(255,255,255,.35);
+  --mono:'JetBrains Mono',monospace;
+}
+body{
+  background:var(--bg);
+  color:#f2f0ff;
+  font-family:var(--mono);
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:2rem 1rem;
+}
+/* ambient glow */
+body::before{
+  content:'';position:fixed;inset:0;
+  background:radial-gradient(ellipse 80% 60% at 50% 20%,rgba(124,106,255,.12),transparent 70%);
+  pointer-events:none;z-index:0;
+}
+
+.wrapper{
+  width:100%;max-width:1000px;
+  position:relative;z-index:1;
+}
+
+/* header */
+.header{
+  text-align:center;margin-bottom:2rem;
+}
+.header h1{
+  font-size:clamp(1.5rem,4vw,2.4rem);font-weight:500;
+  background:linear-gradient(135deg,#7c6aff,#c56aff,#6ab4ff);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  letter-spacing:.04em;margin-bottom:.4rem;
+}
+.header p{font-size:.72rem;color:var(--muted);letter-spacing:.06em}
+.header .cta{
+  display:inline-flex;align-items:center;gap:.5rem;
+  margin-top:1rem;padding:.45rem 1.2rem;
+  background:rgba(124,106,255,.15);border:1px solid rgba(124,106,255,.35);
+  border-radius:100px;color:var(--purple);font-size:.68rem;letter-spacing:.08em;
+  text-decoration:none;transition:background .2s,border-color .2s;
+}
+.header .cta:hover{background:rgba(124,106,255,.25);border-color:rgba(124,106,255,.6)}
+
+/* terminal window */
+.terminal{
+  background:var(--bg);
+  border:1px solid rgba(124,106,255,.22);
+  border-radius:10px;
+  overflow:hidden;
+  box-shadow:0 0 80px rgba(124,106,255,.1),0 0 0 1px rgba(124,106,255,.08);
+}
+
+/* chrome bar */
+.chrome{
+  background:var(--bg2);
+  border-bottom:1px solid rgba(124,106,255,.15);
+  padding:.55rem 1.1rem;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.chrome-dots{display:flex;gap:.45rem}
+.dot{width:11px;height:11px;border-radius:50%}
+.dot-r{background:#ff5f57}.dot-y{background:#ffbd2e}.dot-g{background:#28c840}
+.chrome-title{font-size:.63rem;color:rgba(255,255,255,.2);letter-spacing:.05em}
+.chrome-status{display:flex;align-items:center;gap:1.2rem}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(106,255,197,.4)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(106,255,197,0)}}
+.live-label{font-size:.6rem;color:var(--green);letter-spacing:.1em}
+.refresh-label{font-size:.6rem;color:var(--muted);letter-spacing:.08em}
+
+/* ticker tape */
+.tape-wrap{
+  background:var(--bg3);
+  border-bottom:1px solid rgba(124,106,255,.1);
+  padding:.3rem 0;overflow:hidden;
+}
+.tape{
+  display:flex;gap:2.5rem;width:max-content;
+  animation:scrollTape 20s linear infinite;
+}
+@keyframes scrollTape{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.tape-item{font-size:.62rem;white-space:nowrap;display:flex;gap:.35rem}
+.tape-item .sym{color:rgba(255,255,255,.6)}
+.tape-item .chg{font-weight:600}
+.up{color:var(--green)}.dn{color:var(--red)}.neutral{color:var(--amber)}
+
+/* macro strip */
+.macro{
+  background:rgba(124,106,255,.04);
+  border-bottom:1px solid rgba(124,106,255,.1);
+  padding:.4rem 1.1rem;
+  display:flex;gap:2rem;flex-wrap:wrap;
+}
+.macro-item{font-size:.6rem;color:var(--muted);display:flex;gap:.4rem;align-items:center}
+.macro-item .lbl{color:rgba(255,255,255,.25);letter-spacing:.06em}
+.macro-item .val{color:#f2f0ff}
+
+/* main grid */
+.main{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:0;
+}
+.col{padding:.9rem;border-right:1px solid rgba(124,106,255,.08)}
+.col:last-child{border-right:none}
+.col-title{
+  font-size:.52rem;color:rgba(124,106,255,.7);
+  letter-spacing:.12em;text-transform:uppercase;
+  margin-bottom:.65rem;
+}
+
+/* stock cards */
+.scard{
+  background:var(--bg2);
+  border-radius:6px;
+  padding:.6rem .75rem;
+  margin-bottom:.5rem;
+  border:1px solid rgba(255,255,255,.05);
+  transition:border-color .2s;
+}
+.scard:hover{border-color:rgba(124,106,255,.25)}
+.scard.bull{border-color:rgba(106,255,197,.15)}
+.scard.bear{border-color:rgba(255,107,107,.12)}
+.scard-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.22rem}
+.scard-sym{font-size:.72rem;font-weight:600;color:#fff}
+.scard-chg{font-size:.68rem;font-weight:600}
+.scard-price{font-size:.72rem;color:rgba(255,255,255,.85);margin-bottom:.3rem}
+.scard-driver{font-size:.6rem;line-height:1.4;margin-bottom:.4rem}
+.scard-footer{display:flex;align-items:center;gap:.4rem}
+.verdict{
+  font-size:.52rem;font-weight:600;
+  padding:.12rem .48rem;border-radius:100px;letter-spacing:.04em;
+}
+.verdict.buy{background:rgba(106,255,197,.12);border:1px solid rgba(106,255,197,.3);color:var(--green)}
+.verdict.wait{background:rgba(255,213,102,.1);border:1px solid rgba(255,213,102,.25);color:var(--amber)}
+.verdict.avoid{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.25);color:var(--red)}
+.conf{font-size:.52rem;color:var(--muted)}
+
+/* sector heatmap */
+.sector-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.28rem}
+.sector-name{font-size:.59rem;color:var(--muted);width:82px;flex-shrink:0}
+.sector-bar-wrap{flex:1;height:14px;background:rgba(255,255,255,.04);border-radius:3px;position:relative;overflow:hidden}
+.sector-bar{position:absolute;top:0;bottom:0;border-radius:3px;transition:width .4s}
+.sector-bar.pos{left:0;background:rgba(106,255,197,.35)}
+.sector-bar.neg{right:0;background:rgba(255,107,107,.3)}
+.sector-val{font-size:.59rem;width:38px;text-align:right;flex-shrink:0}
+
+/* risk gauge */
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;margin:.4rem 0 .8rem}
+
+/* breadth bar */
+.breadth-title{font-size:.52rem;color:rgba(124,106,255,.7);letter-spacing:.12em;text-transform:uppercase;margin-bottom:.35rem;margin-top:.6rem}
+.breadth-bar{display:flex;border-radius:4px;overflow:hidden;height:16px}
+.b-bull{background:rgba(106,255,197,.38);display:flex;align-items:center;justify-content:center}
+.b-neu{background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center}
+.b-bear{background:rgba(255,107,107,.32);display:flex;align-items:center;justify-content:center}
+.b-label{font-size:.54rem}
+
+/* chat panel */
+.chat-box{display:flex;flex-direction:column;gap:.4rem;min-height:200px}
+.bubble-user{
+  background:rgba(124,106,255,.12);
+  border:1px solid rgba(124,106,255,.2);
+  border-radius:8px 8px 2px 8px;
+  padding:.5rem .7rem;
+  font-size:.67rem;color:rgba(255,255,255,.8);
+  align-self:flex-end;max-width:92%;
+}
+.bubble-ai{
+  background:var(--bg2);
+  border:1px solid rgba(106,255,197,.18);
+  border-radius:2px 8px 8px 8px;
+  padding:.65rem .75rem;flex:1;
+}
+.ai-verdict-row{display:flex;align-items:center;gap:.45rem;margin-bottom:.45rem}
+.levels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.3rem;margin-bottom:.5rem}
+.level-box{background:rgba(255,255,255,.04);border-radius:4px;padding:.3rem .4rem;text-align:center}
+.level-lbl{font-size:.48rem;color:var(--muted);margin-bottom:.15rem}
+.level-val{font-size:.6rem}
+.ai-text{font-size:.61rem;color:var(--muted);line-height:1.5}
+.chat-input-row{display:flex;gap:.4rem;margin-top:.5rem}
+.chat-input{
+  flex:1;background:var(--bg3);
+  border:1px solid rgba(124,106,255,.2);
+  border-radius:6px;padding:.4rem .65rem;
+  font-family:var(--mono);font-size:.6rem;color:var(--muted);
+}
+.chat-btn{
+  background:rgba(124,106,255,.2);
+  border:1px solid rgba(124,106,255,.4);
+  border-radius:6px;padding:.4rem .75rem;
+  font-family:var(--mono);font-size:.6rem;color:var(--purple);
+  cursor:pointer;white-space:nowrap;
+}
+.claude-badge{
+  font-size:.5rem;padding:.1rem .4rem;
+  background:rgba(124,106,255,.12);border:1px solid rgba(124,106,255,.25);
+  border-radius:100px;color:var(--purple);margin-left:.4rem;
+}
+
+/* spotlight bar */
+.spotlight{
+  padding:.65rem 1.1rem;
+  background:var(--bg3);
+  border-top:1px solid rgba(124,106,255,.1);
+  display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap;
+}
+.spot-label{font-size:.57rem;color:rgba(255,213,102,.8);letter-spacing:.08em;flex-shrink:0}
+.spot-sym{font-size:.7rem;font-weight:600;color:#fff;flex-shrink:0}
+.spot-chg{font-size:.65rem;color:var(--green);flex-shrink:0}
+.spot-desc{font-size:.61rem;color:var(--muted);flex:1}
+.spot-conf{
+  font-size:.52rem;padding:.14rem .55rem;
+  background:rgba(106,255,197,.08);border:1px solid rgba(106,255,197,.2);
+  border-radius:100px;color:var(--green);flex-shrink:0;
+}
+
+/* footer */
+.footer{text-align:center;margin-top:1.5rem;font-size:.62rem;color:var(--muted)}
+.footer a{color:var(--purple);text-decoration:none}
+.footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+
+<div class="wrapper">
+
+  <div class="header">
+    <h1>⚡ Equity Radar</h1>
+    <p>Bloomberg-style market intelligence terminal · 120+ tickers · pre-market, live &amp; post-market</p>
+    <a class="cta" href="https://github.com/ShubhrataG/equity-radar">
+      ↗ View on GitHub &amp; Run Locally
+    </a>
+  </div>
+
+  <div class="terminal">
+
+    <!-- Chrome -->
+    <div class="chrome">
+      <div style="display:flex;align-items:center;gap:.65rem">
+        <div class="chrome-dots">
+          <div class="dot dot-r"></div>
+          <div class="dot dot-y"></div>
+          <div class="dot dot-g"></div>
+        </div>
+        <span class="chrome-title">equity-radar · localhost:5173</span>
+      </div>
+      <div class="chrome-status">
+        <div style="display:flex;align-items:center;gap:.4rem">
+          <div class="live-dot"></div>
+          <span class="live-label">LIVE</span>
+        </div>
+        <span class="refresh-label">REFRESH IN 04:52</span>
+      </div>
+    </div>
+
+    <!-- Ticker tape -->
+    <div class="tape-wrap">
+      <div class="tape">
+        <span class="tape-item"><span class="sym">NVDA</span><span class="chg up">+2.14%</span></span>
+        <span class="tape-item"><span class="sym">META</span><span class="chg dn">-0.83%</span></span>
+        <span class="tape-item"><span class="sym">AAPL</span><span class="chg up">+1.02%</span></span>
+        <span class="tape-item"><span class="sym">MSFT</span><span class="chg up">+0.67%</span></span>
+        <span class="tape-item"><span class="sym">TSLA</span><span class="chg dn">-1.45%</span></span>
+        <span class="tape-item"><span class="sym">AMZN</span><span class="chg up">+0.91%</span></span>
+        <span class="tape-item"><span class="sym">GOOG</span><span class="chg dn">-0.29%</span></span>
+        <span class="tape-item"><span class="sym">AMD</span><span class="chg up">+3.22%</span></span>
+        <span class="tape-item"><span class="sym">PLTR</span><span class="chg up">+4.11%</span></span>
+        <span class="tape-item"><span class="sym">INTC</span><span class="chg dn">-2.07%</span></span>
+        <span class="tape-item"><span class="sym">SPY</span><span class="chg up">+0.44%</span></span>
+        <span class="tape-item"><span class="sym">QQQ</span><span class="chg up">+0.78%</span></span>
+        <span class="tape-item"><span class="sym">VIX</span><span class="chg neutral">17.3</span></span>
+        <span class="tape-item"><span class="sym">RKLB</span><span class="chg up">+5.60%</span></span>
+        <span class="tape-item"><span class="sym">COIN</span><span class="chg up">+2.33%</span></span>
+        <span class="tape-item"><span class="sym">CRWD</span><span class="chg up">+1.18%</span></span>
+        <!-- duplicate for seamless loop -->
+        <span class="tape-item"><span class="sym">NVDA</span><span class="chg up">+2.14%</span></span>
+        <span class="tape-item"><span class="sym">META</span><span class="chg dn">-0.83%</span></span>
+        <span class="tape-item"><span class="sym">AAPL</span><span class="chg up">+1.02%</span></span>
+        <span class="tape-item"><span class="sym">MSFT</span><span class="chg up">+0.67%</span></span>
+        <span class="tape-item"><span class="sym">TSLA</span><span class="chg dn">-1.45%</span></span>
+        <span class="tape-item"><span class="sym">AMZN</span><span class="chg up">+0.91%</span></span>
+        <span class="tape-item"><span class="sym">AMD</span><span class="chg up">+3.22%</span></span>
+        <span class="tape-item"><span class="sym">PLTR</span><span class="chg up">+4.11%</span></span>
+        <span class="tape-item"><span class="sym">SPY</span><span class="chg up">+0.44%</span></span>
+        <span class="tape-item"><span class="sym">VIX</span><span class="chg neutral">17.3</span></span>
+        <span class="tape-item"><span class="sym">RKLB</span><span class="chg up">+5.60%</span></span>
+        <span class="tape-item"><span class="sym">COIN</span><span class="chg up">+2.33%</span></span>
+      </div>
+    </div>
+
+    <!-- Macro strip -->
+    <div class="macro">
+      <div class="macro-item"><span class="lbl">S&amp;P 500</span><span class="val" style="color:var(--green)">5,248 +0.44%</span></div>
+      <div class="macro-item"><span class="lbl">NASDAQ</span><span class="val" style="color:var(--green)">18,312 +0.78%</span></div>
+      <div class="macro-item"><span class="lbl">DOW</span><span class="val" style="color:var(--green)">39,105 +0.21%</span></div>
+      <div class="macro-item"><span class="lbl">VIX</span><span class="val" style="color:var(--amber)">17.3</span></div>
+      <div class="macro-item"><span class="lbl">10Y YIELD</span><span class="val">4.38%</span></div>
+      <div class="macro-item"><span class="lbl">SESSION</span><span class="val" style="color:var(--amber)">PRE-MARKET</span></div>
+    </div>
+
+    <!-- Main 3-col grid -->
+    <div class="main">
+
+      <!-- Col 1: Stock Cards -->
+      <div class="col">
+        <div class="col-title">Top Movers</div>
+
+        <div class="scard bull">
+          <div class="scard-top">
+            <span class="scard-sym">NVDA</span>
+            <span class="scard-chg up">+2.14%</span>
+          </div>
+          <div class="scard-price">$876.40</div>
+          <div class="scard-driver up">↑ Blackwell GPU demand surge · data-center beat</div>
+          <div class="scard-footer">
+            <span class="verdict buy">BUY</span>
+            <span class="conf">conf 87% · High</span>
+          </div>
+        </div>
+
+        <div class="scard bull">
+          <div class="scard-top">
+            <span class="scard-sym">PLTR</span>
+            <span class="scard-chg up">+4.11%</span>
+          </div>
+          <div class="scard-price">$24.18</div>
+          <div class="scard-driver up">↑ DoD AIP contract expansion confirmed</div>
+          <div class="scard-footer">
+            <span class="verdict buy">BUY</span>
+            <span class="conf">conf 79% · High</span>
+          </div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-top">
+            <span class="scard-sym">AMD</span>
+            <span class="scard-chg up">+3.22%</span>
+          </div>
+          <div class="scard-price">$168.50</div>
+          <div class="scard-driver" style="color:rgba(255,213,102,.7)">→ MI300X gaining data-center share</div>
+          <div class="scard-footer">
+            <span class="verdict wait">WAIT</span>
+            <span class="conf">conf 64% · Med</span>
+          </div>
+        </div>
+
+        <div class="scard bear">
+          <div class="scard-top">
+            <span class="scard-sym">TSLA</span>
+            <span class="scard-chg dn">-1.45%</span>
+          </div>
+          <div class="scard-price">$172.63</div>
+          <div class="scard-driver dn">↓ Delivery miss · price cut margin concern</div>
+          <div class="scard-footer">
+            <span class="verdict avoid">AVOID</span>
+            <span class="conf">conf 72% · High</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 2: Sector heatmap + risk gauge -->
+      <div class="col">
+        <div class="col-title">Sector Heat Map</div>
+
+        <div class="sector-row">
+          <span class="sector-name">Technology</span>
+          <div class="sector-bar-wrap"><div class="sector-bar pos" style="width:72%"></div></div>
+          <span class="sector-val up">+1.84%</span>
+        </div>
+        <div class="sector-row">
+          <span class="sector-name">Financials</span>
+          <div class="sector-bar-wrap"><div class="sector-bar pos" style="width:55%"></div></div>
+          <span class="sector-val up">+1.02%</span>
+        </div>
+        <div class="sector-row">
+          <span class="sector-name">Healthcare</span>
+          <div class="sector-bar-wrap"><div class="sector-bar pos" style="width:42%"></div></div>
+          <span class="sector-val up">+0.61%</span>
+        </div>
+        <div class="sector-row">
+          <span class="sector-name">Consumer</span>
+          <div class="sector-bar-wrap"><div class="sector-bar neg" style="width:20%"></div></div>
+          <span class="sector-val dn">-0.28%</span>
+        </div>
+        <div class="sector-row">
+          <span class="sector-name">Energy</span>
+          <div class="sector-bar-wrap"><div class="sector-bar neg" style="width:35%"></div></div>
+          <span class="sector-val dn">-0.93%</span>
+        </div>
+        <div class="sector-row">
+          <span class="sector-name">Industrials</span>
+          <div class="sector-bar-wrap"><div class="sector-bar neg" style="width:28%"></div></div>
+          <span class="sector-val dn">-0.51%</span>
+        </div>
+
+        <!-- Risk Gauge -->
+        <div class="col-title" style="margin-top:.9rem">Market Risk Gauge</div>
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 140 82" width="180" height="105">
+            <defs>
+              <linearGradient id="gaugeg2" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#6affc5"/>
+                <stop offset="50%" stop-color="#ffd666"/>
+                <stop offset="100%" stop-color="#ff6b6b"/>
+              </linearGradient>
+            </defs>
+            <path d="M14 76 A56 56 0 0 1 126 76" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="9" stroke-linecap="round"/>
+            <path d="M14 76 A56 56 0 0 1 126 76" fill="none" stroke="url(#gaugeg2)" stroke-width="9" stroke-linecap="round" stroke-dasharray="176" stroke-dashoffset="55" opacity=".88"/>
+            <line x1="70" y1="76" x2="95" y2="32" stroke="#ffd666" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="70" cy="76" r="5" fill="#0d0d18" stroke="#ffd666" stroke-width="2"/>
+            <text x="70" y="67" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="7.5" fill="rgba(255,255,255,.4)">MODERATE</text>
+            <text x="70" y="56" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="6.5" fill="rgba(255,255,255,.25)">Score 42 / 100</text>
+            <text x="14" y="86" font-family="JetBrains Mono,monospace" font-size="6.5" fill="rgba(106,255,197,.55)">LOW</text>
+            <text x="110" y="86" font-family="JetBrains Mono,monospace" font-size="6.5" fill="rgba(255,107,107,.55)">HIGH</text>
+          </svg>
+        </div>
+
+        <!-- Breadth bar -->
+        <div class="breadth-title">Bull / Bear Breadth</div>
+        <div class="breadth-bar">
+          <div class="b-bull" style="flex:63"><span class="b-label up">63%</span></div>
+          <div class="b-neu" style="flex:12"><span class="b-label" style="color:rgba(255,255,255,.35);font-size:.5rem">12</span></div>
+          <div class="b-bear" style="flex:25"><span class="b-label dn">25%</span></div>
+        </div>
+      </div>
+
+      <!-- Col 3: Ask the Market -->
+      <div class="col" style="display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;margin-bottom:.65rem">
+          <span class="col-title" style="margin-bottom:0">Ask the Market</span>
+          <span class="claude-badge">Claude AI + Web Search</span>
+        </div>
+        <div class="chat-box">
+          <div class="bubble-user">Should I buy NVDA at $876?</div>
+          <div class="bubble-ai">
+            <div class="ai-verdict-row">
+              <span class="verdict buy">BUY</span>
+              <span class="conf">Confidence 87%</span>
+            </div>
+            <div class="levels">
+              <div class="level-box">
+                <div class="level-lbl">ENTRY</div>
+                <div class="level-val up">$870–882</div>
+              </div>
+              <div class="level-box">
+                <div class="level-lbl">STOP</div>
+                <div class="level-val dn">$845</div>
+              </div>
+              <div class="level-box">
+                <div class="level-lbl">TARGET</div>
+                <div class="level-val up">$920</div>
+              </div>
+            </div>
+            <div class="ai-text">Blackwell ramp + data-center tailwind intact. Price holding above 50-day MA. Risk/reward favors entry on current dip.</div>
+          </div>
+
+          <div class="bubble-user" style="margin-top:.25rem">will it go up to 5? <span style="font-size:.52rem;opacity:.4">(re: PLTR…)</span></div>
+          <div class="bubble-ai">
+            <div class="ai-verdict-row">
+              <span class="verdict buy">LIKELY</span>
+              <span class="conf">Short-term momentum</span>
+            </div>
+            <div class="ai-text">PLTR at $24.18, resistance at $25.80 then $28. DoD contract catalyst provides fundamental support. $5 is a longer-term target — watch $26 breakout first.</div>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <div class="chat-input">e.g. LUNR target? · any market question…</div>
+          <div class="chat-btn">Ask ↵</div>
+        </div>
+      </div>
+
+    </div><!-- /main -->
+
+    <!-- Spotlight bar -->
+    <div class="spotlight">
+      <span class="spot-label">⚡ TOP CONVICTION SETUP</span>
+      <span class="spot-sym">PLTR</span>
+      <span class="spot-chg">+4.11%</span>
+      <span class="spot-desc">DoD contract expansion · highest confidence × momentum score this session · updates each refresh</span>
+      <span class="spot-conf">conf 79%</span>
+    </div>
+
+  </div><!-- /terminal -->
+
+  <div class="footer">
+    <p>Interactive preview — static mock. For live data run <code style="background:rgba(255,255,255,.06);padding:.1rem .4rem;border-radius:3px">python premarket_server.py</code> then open <a href="http://localhost:5173">localhost:5173</a></p>
+    <p style="margin-top:.4rem"><a href="https://github.com/ShubhrataG/equity-radar">github.com/ShubhrataG/equity-radar</a></p>
+  </div>
+
+</div>
+</body>
+</html>
