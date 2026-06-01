@@ -22,6 +22,9 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+# ── In-memory cache: populated by /api/refresh, consumed by picks recommender ──
+_refresh_cache = {"stocks": {}, "ts": 0}
+
 # ── ALL TICKERS ───────────────────────────────────────────────────────────────
 ALL_TICKERS = [
     # AI / Semiconductors
@@ -426,6 +429,8 @@ def api_refresh():
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
         results = list(ex.map(fetch, tickers))
     stocks = {s["ticker"]: s for s in results}
+    _refresh_cache["stocks"] = stocks
+    _refresh_cache["ts"] = time.time()
 
     vix_p,_     = idx("^VIX")
     sp_p,sp_c   = idx("^GSPC")
@@ -733,6 +738,107 @@ Search the web now for the latest news, analyst price targets, and technical lev
         raise ValueError(f"No JSON in response: {raw[:300]}")
     return json.loads(m.group())
 
+_PICKS_KW = [
+    "which stock","what stock","which stocks","what stocks",
+    "should i buy","what should i buy","what to buy","good buy","good stock",
+    "top pick","best pick","best stock","top stock","recommend",
+    "bullish tomorrow","going up tomorrow","will go up","what will go up",
+    "buy today","buy now","buy tonight","buy this week",
+    "what looks good","what's hot","whats hot","strong today","what is strong",
+    "give me a stock","suggest a stock","any good stocks","any stocks",
+]
+
+def _picks_ask(question):
+    """Answer 'which stock should I buy' using cached refresh data or a quick scan."""
+    import concurrent.futures as _cf
+    # Use cached refresh if fresh (< 12 min old)
+    cache_age = time.time() - _refresh_cache.get("ts", 0)
+    if cache_age < 720 and _refresh_cache.get("stocks"):
+        stocks = _refresh_cache["stocks"]
+    else:
+        # Quick scan of 25 liquid, high-interest names
+        quick = ["NVDA","PLTR","AMD","AAPL","MSFT","META","AMZN","GOOGL","TSLA",
+                 "CRWD","COIN","RKLB","ASTS","LUNR","LLY","JPM","HOOD","MSTR",
+                 "SOFI","SMCI","ARM","AVGO","TSM","NET","SNOW"]
+        with _cf.ThreadPoolExecutor(max_workers=12) as ex:
+            raw = list(ex.map(fetch, quick))
+        stocks = {s["ticker"]: s for s in raw}
+
+    # Rank: bullish, price > 0, sort by setup_score desc
+    picks = sorted(
+        [s for s in stocks.values() if s["bias"] == "bullish" and s["price"] > 0],
+        key=lambda s: s.get("setup_score", 0), reverse=True
+    )[:5]
+
+    if not picks:
+        return {"type": "general", "answer": "No clear bullish setups detected right now. Market may be broadly bearish or flat — check back after the next refresh.", "mode": "rule-based"}
+
+    # Build a structured commentary without Claude
+    def pick_line(s):
+        ss   = s.get("setup_score", 0)
+        prob = {"high": 75, "medium": 62, "low": 52}.get(s["confidence"], 55)
+        return (
+            f"{s['ticker']} ({s['name']}) — ${s['price']:.2f} ({s['change_pct']:+.2f}%) · "
+            f"Setup {ss}/100 · {s.get('setup_label','—')} · upside ~{prob}%"
+        )
+
+    rule_answer = (
+        f"Top {len(picks)} bullish setups right now, ranked by pre-move signal strength:\n\n" +
+        "\n".join(f"#{i+1}  {pick_line(p)}\n    {p.get('driver','—')}\n    Watch: {p.get('key_level','—')}"
+                  for i, p in enumerate(picks)) +
+        "\n\nSetup Score rewards stocks with unusual volume (informed buying), "
+        "price near the 50-day MA (breakout zone), small-to-moderate move (not yet extended), "
+        "and a fresh news catalyst — these are pre-move signals, not stocks that already ran."
+    )
+
+    if _ANT_CLIENT:
+        try:
+            ctx   = "\n".join(pick_line(p) for p in picks)
+            mkt   = _get_quick_market_ctx()
+            sys_p = (
+                "You are a senior market analyst in the Equity Radar terminal. "
+                "The user asked which stocks to buy. You have the top bullish setups from a live scan ranked by predictive setup score. "
+                "Write 3-4 short paragraphs: (1) your top recommendation and exactly why, "
+                "(2) what makes the #1 or #2 setup compelling right now, "
+                "(3) what level confirms the trade and what kills it, "
+                "(4) one-line on overall market backdrop. "
+                "Be direct, specific with price levels. Plain text only — no markdown symbols."
+            )
+            u = f'User asked: "{question}"\n\nTop bullish setups (ranked by setup score):\n{ctx}'
+            if mkt: u += f"\n\n{mkt}"
+            resp = _ANT_CLIENT.messages.create(
+                model="claude-sonnet-4-6", max_tokens=700, system=sys_p,
+                messages=[{"role": "user", "content": u}],
+            )
+            ai_text = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+            answer  = ai_text if ai_text else rule_answer
+        except Exception:
+            answer = rule_answer
+    else:
+        answer = rule_answer
+
+    return {
+        "type": "picks",
+        "picks": [
+            {
+                "ticker":      s["ticker"],
+                "name":        s["name"],
+                "price":       s["price"],
+                "change_pct":  s["change_pct"],
+                "setup_score": s.get("setup_score", 0),
+                "setup_label": s.get("setup_label", "—"),
+                "driver":      s.get("driver", "—"),
+                "key_level":   s.get("key_level", "—"),
+                "confidence":  s["confidence"],
+                "upside_prob": {"high": 75, "medium": 62, "low": 52}.get(s["confidence"], 55),
+            }
+            for s in picks
+        ],
+        "answer": answer,
+        "mode": "ai" if _ANT_CLIENT else "rule-based",
+    }
+
+
 @app.route("/api/ask")
 def api_ask():
     question = req.args.get("q", "").strip()
@@ -746,13 +852,21 @@ def api_ask():
     # 1. Extract ticker
     ticker = _extract_ticker(question)
     if not ticker:
-        # No ticker found — route to general market Q&A if Claude is available
+        # Check for "which stock / recommend / top picks" questions first
+        q_low = question.lower()
+        if any(kw in q_low for kw in _PICKS_KW):
+            try:
+                return jsonify(_picks_ask(question))
+            except Exception as e:
+                return jsonify({"error": f"Picks scan failed: {str(e)[:120]}"}), 500
+
+        # General market Q&A — requires Claude
         if _ANT_CLIENT:
             try:
                 return jsonify(_general_ask(question))
             except Exception as e:
                 return jsonify({"error": f"AI analysis failed: {str(e)[:120]}"}), 500
-        # No Claude: fall back to helpful error
+        # No Claude and no ticker: helpful error
         return jsonify({
             "error": (
                 "I couldn't identify a stock ticker in your question. "
